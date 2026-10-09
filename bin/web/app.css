@@ -66,6 +66,8 @@ table.clusters tr.on { background: color-mix(in srgb, var(--ok) 10%, transparent
 .card.sel { border-color: var(--sel); }
 .card.done { opacity: .4; }
 .card .face { width: 100%; aspect-ratio: 1; }
+.card .face.photo { background-size: cover; background-position: center; }
+a.card { display: block; color: inherit; text-decoration: none; }
 .card .lbl { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .tagchip { font-size: 11px; color: var(--ok); }
 .card .tagchip.disagree { color: var(--bad); }

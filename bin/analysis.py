@@ -372,7 +372,9 @@ class Model:
             "tagNoFaces": len(tagged - with_faces),
             # Only takeout assets can be expected to carry the tag at all.
             "faceOnly": len((has & takeout) - tagged),
-            "agreement": len(both) / len(with_faces) if with_faces else 0,
+            # Share of the tagged photos on which this person's face was
+            # found. A miss is mostly an undetected face, not a wrong tag.
+            "agreement": len(both) / len(tagged) if tagged else 0,
         })
         return st
 
@@ -382,11 +384,14 @@ class Model:
         has = self.assets_of(person)
         out = []
         if kind == "tagOnly":
-            for a in sorted(tagged - has):
-                for fid in self.faces_by_asset.get(a, ()):
-                    out.append(self.face_json(self.faces[fid]))
-                if len(out) >= limit:
-                    break
+            # Whole photos, not the faces on them: the tagged person is
+            # usually there, just too small or turned away to be detected,
+            # so the faces that were found are other people.
+            for a in sorted(tagged - has)[:limit]:
+                out.append({"asset": a, "file": self.assets[a]["originalFileName"],
+                            "faces": sorted({self.display_name(self.faces[fid].old) or "unnamed"
+                                             for fid in self.faces_by_asset.get(a, ())
+                                             if self.faces[fid].old in self.old})})
         elif kind == "faceOnly":
             pool = (has & self.takeout_assets()) - tagged
             for fid in self.old[person].faces:

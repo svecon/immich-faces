@@ -226,8 +226,9 @@ class App:
         st = self.model.tag_stats(tag_id, person)
         ex = {}
         if person:
-            for kind in ("tagOnly", "faceOnly", "both"):
+            for kind in ("faceOnly", "both"):
                 ex[kind] = self.label_faces(self.model.tag_examples(tag_id, person, kind))
+            ex["tagOnly"] = self.model.tag_examples(tag_id, person, "tagOnly")
         return {"stats": st, "examples": ex}
 
     def trusted_tags(self) -> dict[str, str]:

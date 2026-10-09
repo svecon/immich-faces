@@ -299,7 +299,7 @@ const tags = {
     const v = t.verdict, a = t.stats.agreement;
     const st = !v ? "" : v.trusted === 1 ? "trusted" : v.trusted === 0 ? "untrusted" : "";
     return `<span>${esc(t.name)}</span><span class="st-${st}">${st}</span>
-            <span class="sub">${t.stats.tagged} photos · ${t.personName ? `→ ${esc(t.personName)} · ${a === undefined ? "" : pct(a) + " agree"}` : "no person matched"}</span>`;
+            <span class="sub">${t.stats.tagged} photos · ${t.personName ? `→ ${esc(t.personName)} · ${a === undefined ? "" : pct(a) + " face found"}` : "no person matched"}</span>`;
   },
   async detail(t) {
     const person = S.detail?.tag === t.id && S.detail.person !== undefined ? S.detail.person : t.person;
@@ -313,6 +313,11 @@ const tags = {
     const grid = (faces, label) => faces?.length ? `<div class="grid">${faces.map((f) => `
       <div class="card" data-face="${f.id}">${faceHTML(f)}<div class="lbl">${label(f)}</div></div>`).join("")}</div>`
       : '<p class="muted">None.</p>';
+    const photos = (list) => list?.length ? `<div class="grid">${list.map((a) => `
+      <a class="card" href="${esc(S.status.server)}/photos/${a.asset}" target="_blank" rel="noopener">
+        <div class="face photo" data-asset="${a.asset}"></div>
+        <div class="lbl" title="${esc(a.file)}">${a.faces.length ? `also: ${esc(a.faces.join(", "))}` : esc(a.file)}</div></a>`).join("")}</div>`
+      : '<p class="muted">None.</p>';
     $("#detail").innerHTML = `
       <h2>${esc(t.value)}</h2>
       <h3>Which person is this tag?</h3>
@@ -321,18 +326,20 @@ const tags = {
       <div class="stats">
         <div><b>${st.tagged}</b>photos tagged</div>
         <div><b>${st.both}</b>tag and face agree</div>
-        <div><b>${st.tagOnly}</b>tagged, face is someone else</div>
-        <div><b>${st.tagNoFaces}</b>tagged, no face found</div>
+        <div><b>${st.tagOnly + st.tagNoFaces}</b>tagged, face not detected</div>
         <div><b>${st.faceOnly}</b>face, no tag (Takeout photos)</div>
-        <div><b>${pct(st.agreement)}</b>agreement</div>
+        <div><b>${pct(st.agreement)}</b>of tagged photos have the face</div>
       </div>
       <div class="toolbar">
         <button class="primary" id="yes"><kbd>y</kbd> Trust this tag</button>
         <button id="no"><kbd>n</kbd> Don't trust it</button>
         ${t.verdict ? '<button id="undo"><kbd>u</kbd> Un-decide</button>' : ""}
       </div>
-      <h3>Tagged, but the face found is someone else (${st.tagOnly})</h3>
-      ${grid(d.examples.tagOnly, (f) => `face: ${esc(f.oldName)}`)}
+      <h3>Tagged, but no face of this person detected (${st.tagOnly} with other faces, ${st.tagNoFaces} with none)</h3>
+      <p class="muted">Usually the person is there — in the background, small or turned away — and Immich
+        never detected the face. These do not count against the tag. Only distrust it if the person is
+        really not in the photo. Click a photo to open it in Immich.</p>
+      ${photos(d.examples.tagOnly)}
       <h3>Face, but no tag, on Takeout photos (${st.faceOnly})</h3>
       ${grid(d.examples.faceOnly, (f) => esc(f.file))}
       <h3>Agreeing, for reference</h3>
