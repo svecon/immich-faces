@@ -10,7 +10,8 @@ API shapes that are easy to get wrong, read from the v3.3 source:
   POST /people/merge       body {"ids": [target, *sources]}
                            first defined name/birthday wins; also merges the
                            other users' people in the cluster group
-  There is no endpoint that unassigns a face.
+  DELETE /faces/{id}       body {"force": false}  -- soft delete, needs face.delete
+  There is no endpoint that unassigns a face, nor one that restores a deleted one.
 """
 
 from __future__ import annotations
@@ -173,6 +174,32 @@ class Writer:
              "before": before, "after": person_id, "why": why, "ref": ref},
             lambda: lib.api("PUT", f"/faces/{person_id}", {"id": face_id}), verify)
 
+    def delete_face(self, face_id: str, asset_id: str, *, why: str = "",
+                    ref: dict | None = None) -> dict:
+        """Remove a false face detection. The photo stays; only the face goes.
+
+        Not reversible: Immich has no endpoint to restore a face, and a face
+        drawn back by hand has no embedding, so it would never cluster. The
+        journal keeps the box so the face can at least be redrawn.
+        """
+        before = None
+        if not self.dry_run:
+            before = next((f for f in lib.api("GET", f"/faces?id={asset_id}")
+                           if f["id"] == face_id), None)
+            if before is None:
+                raise WriteError(f"face {face_id} is no longer on asset {asset_id}")
+            before = {"person": (before.get("person") or {}).get("id"),
+                      **{k: before.get(k) for k in ("boundingBoxX1", "boundingBoxY1",
+                         "boundingBoxX2", "boundingBoxY2", "imageWidth", "imageHeight")}}
+
+        def verify():
+            left = [f for f in lib.api("GET", f"/faces?id={asset_id}") if f["id"] == face_id]
+            return "face still listed" if left else ""
+
+        return self._run(
+            {"op": "face.delete", "face": face_id, "asset": asset_id,
+             "before": before, "why": why, "ref": ref},
+            lambda: lib.api("DELETE", f"/faces/{face_id}", {"force": False}), verify)
 
     def create_person(self, fields: dict, *, why: str = "") -> str:
         """Create an empty person (used to rebuild one a merge removed)."""

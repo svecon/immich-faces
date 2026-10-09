@@ -36,6 +36,8 @@ def describe(e: dict) -> str:
     if op == "person.merge":
         n = sum(len(v["faces"]) for v in (e.get("before") or {}).values())
         return f"merge {len(e['sources'])} person(s), {n} faces, into {e['target'][:8]}"
+    if op == "face.delete":
+        return f"delete face {e['face'][:8]} on asset {e['asset'][:8]}"
     if op == "person.create":
         return f"create {e.get('created', '?')}"
     return op
@@ -61,6 +63,9 @@ def reverse(w: writer.Writer, e: dict) -> str:
                 w.reassign(f["face"], f["asset"], new, why=why)
             out.append(f"{src[:8]} recreated as {new} with {len(b['faces'])} faces")
         return "; ".join(out)
+    if op == "face.delete":
+        return ("SKIPPED: Immich cannot restore a deleted face; the journal entry has its "
+                "box if you want to redraw it by hand")
     return "SKIPPED: not reversible"
 
 

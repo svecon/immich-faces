@@ -38,6 +38,7 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
           "/app.css": ("app.css", "text/css; charset=utf-8")}
 UUID = r"[0-9a-f-]{36}"
+CLUSTER_MIN_FACES = 3
 
 
 # --------------------------------------------------------------------------
@@ -145,6 +146,8 @@ class App:
             f = self.model.faces.get(fid)
             if f and d["action"] == "move" and not d["error"] and d["target"] in pairing:
                 f.new = pairing[d["target"]][0]
+            if f and d["action"] == "notface" and not d["error"]:
+                f.gone = True
 
     # -- pairings ------------------------------------------------------
     def confirmed_pairing(self) -> dict[str, list[str]]:
@@ -272,7 +275,8 @@ class App:
 
     def decide_faces(self, decisions: list[dict]) -> dict:
         """[{face, action, person}]. move: reassign to `person`'s primary
-        cluster. keep: accept the face where it is now."""
+        cluster. keep: accept the face where it is now. notface: delete the
+        face detection (not reversible)."""
         pairing = self.confirmed_pairing()
         results = {"ok": 0, "failed": []}
         with self.write_lock:
@@ -284,6 +288,16 @@ class App:
                 if action == "keep":
                     self.state.set_face(fid, "keep", f.new)
                     results["ok"] += 1
+                    continue
+                if action == "notface":
+                    try:
+                        self.writer.delete_face(fid, f.asset, why="not a face", ref={"face": fid})
+                        f.gone = True
+                        self.state.set_face(fid, "notface", None)
+                        results["ok"] += 1
+                    except Exception as e:
+                        self.state.set_face(fid, "notface", None, str(e))
+                        results["failed"].append({"face": fid, "error": str(e)})
                     continue
                 if person not in pairing:
                     results["failed"].append({"face": fid, "error": "person not paired"})
@@ -300,6 +314,29 @@ class App:
                     self.state.set_face(fid, "move", person, str(e))
                     results["failed"].append({"face": fid, "error": str(e)})
         return results
+
+    # -- unnamed clusters ----------------------------------------------
+    def clusters(self):
+        """Clusters no pairing claimed: where false detections collect."""
+        claimed = {c for cs in self.confirmed_pairing().values() for c in cs}
+        out = []
+        for c, fids in self.model.new_faces.items():
+            mine = [fid for fid in fids if self.model.mine(self.model.faces[fid])]
+            if c in claimed or len(mine) < CLUSTER_MIN_FACES:
+                continue
+            out.append({"id": c, "faces": len(mine), "others": len(fids) - len(mine)})
+        out.sort(key=lambda r: -r["faces"])
+        return {"clusters": out, "server": lib.BASE_URL}
+
+    def cluster_detail(self, cid: str):
+        done = self.state.faces()
+        faces = [f for f in self.model.faces.values()
+                 if f.new == cid and self.model.mine(f)
+                 and (not f.gone or (done.get(f.id) or {}).get("action") == "notface")]
+        faces.sort(key=lambda f: self.model.assets[f.asset]["originalFileName"])
+        return {"id": cid, "others": sum(1 for fid in self.model.new_faces.get(cid, ())
+                                          if not self.model.mine(self.model.faces[fid])),
+                "faces": self.label_faces([self.model.face_json(f) for f in faces])}
 
     # -- featured photo --------------------------------------------------
     def featured(self):
@@ -440,7 +477,7 @@ class Handler(BaseHTTPRequestHandler):
             routes = {
                 "/api/status": app.status, "/api/pairings": app.pairings,
                 "/api/tags": app.tags, "/api/review": app.review, "/api/people": app.people,
-                "/api/featured": app.featured,
+                "/api/featured": app.featured, "/api/clusters": app.clusters,
             }
             if p in routes:
                 return self._json(routes[p]())
@@ -450,6 +487,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(app.review_person(m[1]))
             if m := re.fullmatch(rf"/api/featured/({UUID})", p):
                 return self._json(app.featured_detail(m[1]))
+            if m := re.fullmatch(rf"/api/clusters/({UUID})", p):
+                return self._json(app.cluster_detail(m[1]))
             if m := re.fullmatch(rf"/live-thumb/({UUID})", p):
                 # The current thumbnail, never cached: it changes when set.
                 data = lib.api("GET", f"/people/{m[1]}/thumbnail", raw=True)

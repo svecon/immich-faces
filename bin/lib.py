@@ -35,7 +35,7 @@ TABLES = ["asset", "asset_face", "person", "person_group", "tag", "tag_asset"]
 # are only needed once names are restored and faces reassigned (stage 4).
 READ_SCOPES = ["person.read", "face.read", "asset.read", "asset.view",
                "tag.read"]
-WRITE_SCOPES = ["person.update", "person.merge", "face.update"]
+WRITE_SCOPES = ["person.update", "person.merge", "face.update", "face.delete"]
 
 # Queues that can still be moving faces between people. Comparing while any
 # of them is busy reports work in progress as discrepancies.

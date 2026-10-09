@@ -41,6 +41,7 @@ aside .group { padding: 10px 12px 4px; font-size: 11px; text-transform: uppercas
                color: var(--muted); }
 #detail { overflow-y: auto; padding: 16px 24px 80px; }
 .muted { color: var(--muted); }
+.mono { font-family: ui-monospace, monospace; }
 .kind { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 8px; background: var(--chip); }
 .kind.confident, .st-applied, .st-trusted { color: var(--ok); }
 .kind.split, .kind.weak, .kind.survivor, .st-skipped { color: var(--warn); }

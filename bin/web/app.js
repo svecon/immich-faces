@@ -398,6 +398,7 @@ const review = {
       <div class="toolbar">
         <button id="yes" class="primary"><kbd>y</kbd> This is ${esc(d.name)}</button>
         <button id="no"><kbd>x</kbd> Not ${esc(d.name)}</button>
+        <button id="notface" title="Delete the face detection: food, a hand, a pattern. Not undoable."><kbd>d</kbd> Not a face</button>
         <select id="moveto"><option value="">Move to…</option>${S.people.filter((x) => x.paired).map((x) =>
           `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
         <span class="muted" id="selcount"></span>
@@ -409,6 +410,7 @@ const review = {
     $("#yes").addEventListener("click", () => review.decide("is"));
     $("#no").addEventListener("click", () => review.decide("isnt"));
     $("#moveto").addEventListener("change", (e) => e.target.value && review.decide("move", e.target.value));
+    $("#notface").addEventListener("click", notFace);
     $$("#detail .card").forEach((c) => c.addEventListener("click", (e) => review.click(c, e)));
     review.paintSel();
   },
@@ -466,6 +468,7 @@ const review = {
     } else if (e.key === "Escape") { S.selected.clear(); review.paintSel(); }
     else if (e.key === "y") review.decide("is");
     else if (e.key === "x") review.decide("isnt");
+    else if (e.key === "d") notFace();
     else return false;
     return true;
   },
@@ -590,7 +593,88 @@ const featured = {
   },
 };
 
-const VIEWS = { people, tags, review, featured };
+// ---------------------------------------------------- not a face / clusters --
+// Deleting a face detection cannot be undone through Immich (no restore
+// endpoint), so it is confirmed every time, and kept for false detections.
+async function notFace() {
+  if (S.busy) return toast("Still working on the previous request…");
+  const ids = [...S.selected];
+  if (!ids.length) return toast("Select faces first");
+  if (!confirm(`Delete ${ids.length} face detection(s)?\n\nThe photos stay; only the face boxes go. ` +
+               `Immich cannot restore a deleted face, so only do this for things that are not faces.`)) return;
+  S.busy = true;
+  toast(`Deleting ${ids.length} face(s)…`, 600000);
+  let r;
+  try { r = await api("/api/faces", { decisions: ids.map((face) => ({ face, action: "notface" })) }); }
+  catch (e) { toast(e.message, 6000); return; }
+  finally { S.busy = false; }
+  toast(`${r.ok} deleted${r.failed.length ? `, ${r.failed.length} failed: ${r.failed[0].error}` : ""}`, 6000);
+  await reload(true);
+}
+
+const clusters = {
+  empty: "No unclaimed clusters.",
+  async load() {
+    const r = await api("/api/clusters");
+    S.items = r.clusters;
+    S.server = r.server;
+    S.people = (await api("/api/people")).people;
+  },
+  row: (c) => `<span class="mono">${c.id.slice(0, 8)}</span><span class="muted">${c.faces}</span>
+               <span class="sub">unnamed${c.others ? ` · +${c.others} on other users' photos` : ""}</span>`,
+  async detail(c) {
+    const d = await api(`/api/clusters/${c.id}`);
+    S.detail = d;
+    S.faces = new Map(d.faces.map((f) => [f.id, f]));
+    const card = (f) => {
+      const gone = f.done?.action === "notface" && !f.done.error;
+      const lbl = gone ? "deleted" : f.done?.error ? "failed" : f.done ? `→ ${esc(S.people.find((x) => x.id === f.done.target)?.name ?? "moved")}` : "";
+      return `<div class="card${f.done && !f.done.error ? " done" : ""}" data-face="${f.id}">
+        ${faceHTML(f)}<div class="lbl" title="${esc(f.file)}">${lbl || esc(f.file)}</div></div>`;
+    };
+    $("#detail").innerHTML = `
+      <h2>Unnamed cluster <span class="mono">${d.id.slice(0, 8)}</span></h2>
+      <p class="muted">Clusters nobody was paired with, largest first: false detections and unrecognisable
+        faces collect here. Select faces, then <kbd>d</kbd> deletes the false detections (not undoable), or
+        "Move to…" puts a real face on someone you know.
+        <a href="${esc(S.server)}/people/${d.id}" target="_blank" rel="noopener">Open in Immich</a> to hide the cluster.
+        ${d.others ? `${d.others} face(s) on other users' photos are not shown — they need that user's key.` : ""}</p>
+      <div class="toolbar">
+        <button id="notface"><kbd>d</kbd> Not a face</button>
+        <select id="moveto"><option value="">Move to…</option>${S.people.filter((x) => x.paired).map((x) =>
+          `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
+        <span class="muted" id="selcount"></span>
+      </div>
+      <div class="grid">${d.faces.map(card).join("") || '<p class="muted">None.</p>'}</div>`;
+    $("#notface").addEventListener("click", notFace);
+    $("#moveto").addEventListener("change", (e) => e.target.value && clusters.move(e.target.value));
+    $$("#detail .card").forEach((c) => c.addEventListener("click", (e) => review.click(c, e)));
+    review.paintSel();
+  },
+  async move(to) {
+    if (S.busy) return toast("Still working on the previous request…");
+    const ids = [...S.selected];
+    if (!ids.length) return toast("Select faces first");
+    S.busy = true;
+    let r;
+    try { r = await api("/api/faces", { decisions: ids.map((face) => ({ face, action: "move", person: to })) }); }
+    catch (e) { toast(e.message, 6000); return; }
+    finally { S.busy = false; }
+    toast(`${r.ok} moved${r.failed.length ? `, ${r.failed.length} failed: ${r.failed[0].error}` : ""}`, 4000);
+    await reload(true);
+  },
+  key(e) {
+    if (e.key === "a") {
+      $$("#detail .card:not(.done)").forEach((c) => S.selected.add(c.dataset.face));
+      review.paintSel();
+    } else if (e.key === "Escape") { S.selected.clear(); review.paintSel(); }
+    else if (e.key === "d") notFace();
+    else return false;
+    return true;
+  },
+};
+
+const VIEWS = { people, tags, review, featured, clusters };
 
 // ------------------------------------------------------------- wiring --
 document.addEventListener("keydown", (e) => {
@@ -605,6 +689,7 @@ document.addEventListener("keydown", (e) => {
   else if (k === "t") show("tags");
   else if (k === "r") show("review");
   else if (k === "f") show("featured");
+  else if (k === "c") show("clusters");
   else if (k === "?") $("#help").showModal();
   else if (k === "v" && S.hover) showHover();
   else return;

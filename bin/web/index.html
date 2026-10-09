@@ -14,6 +14,7 @@
     <button data-view="tags"><kbd>t</kbd> Google tags</button>
     <button data-view="review"><kbd>r</kbd> Face review</button>
     <button data-view="featured"><kbd>f</kbd> Featured photo</button>
+    <button data-view="clusters"><kbd>c</kbd> Clusters</button>
   </nav>
   <span id="mode" class="badge"></span>
   <button id="help-btn" title="Keyboard shortcuts"><kbd>?</kbd></button>
@@ -27,7 +28,7 @@
   <h2>Keyboard</h2>
   <table>
     <tr><th colspan="2">Everywhere</th></tr>
-    <tr><td><kbd>p</kbd> <kbd>t</kbd> <kbd>r</kbd></td><td>People · Tags · Review</td></tr>
+    <tr><td><kbd>p</kbd> <kbd>t</kbd> <kbd>r</kbd> <kbd>f</kbd> <kbd>c</kbd></td><td>People · Tags · Review · Featured · Clusters</td></tr>
     <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>Next / previous item in the list</td></tr>
     <tr><td><kbd>v</kbd> or double-click</td><td>Show the whole photo for the face under the mouse</td></tr>
     <tr><th colspan="2">People</th></tr>
@@ -44,10 +45,14 @@
     <tr><td><kbd>y</kbd></td><td>Selected faces <i>are</i> this person</td></tr>
     <tr><td><kbd>x</kbd></td><td>Selected faces are <i>not</i> this person</td></tr>
     <tr><td>Move to…</td><td>Put selected faces on any paired person</td></tr>
+    <tr><td><kbd>d</kbd></td><td>Not a face: delete the selected face detections (asks first; not undoable)</td></tr>
     <tr><th colspan="2">Featured photo</th></tr>
     <tr><td>slider</td><td>Weigh recency against face size</td></tr>
     <tr><td><kbd>1</kbd>–<kbd>9</kbd>, click</td><td>Make that photo the featured one</td></tr>
     <tr><td><kbd>Enter</kbd></td><td>Keep the current featured photo</td></tr>
+    <tr><th colspan="2">Clusters</th></tr>
+    <tr><td><kbd>a</kbd> / <kbd>Esc</kbd></td><td>Select all / clear selection</td></tr>
+    <tr><td><kbd>d</kbd></td><td>Not a face (asks first; not undoable)</td></tr>
   </table>
   <form method="dialog"><button>Close</button></form>
 </dialog>
