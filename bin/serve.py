@@ -174,6 +174,10 @@ class App:
         if clash:
             raise ValueError(f"cluster already paired with {', '.join(clash)}")
         with self.write_lock:
+            # Checked again under the lock: a second click queued behind a slow
+            # merge would otherwise try to merge clusters that no longer exist.
+            if (self.state.pairings().get(old) or {}).get("status") == "applied":
+                raise ValueError("already applied")
             try:
                 primary, rest = targets[0], targets[1:]
                 why = f"pairing {self.name_of(old)}"

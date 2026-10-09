@@ -15,6 +15,7 @@ API shapes that are easy to get wrong, read from the v3.3 source:
 
 from __future__ import annotations
 
+import concurrent.futures as cf
 import json
 import os
 import threading
@@ -114,12 +115,14 @@ class Writer:
             if not nxt:
                 break
             page = int(nxt)
-        faces = []
-        for a in assets:
-            for f in lib.api("GET", f"/faces?id={a}"):
-                if (f.get("person") or {}).get("id") == person_id:
-                    faces.append({"face": f["id"], "asset": a})
-        return faces
+        def of(asset):
+            return [{"face": f["id"], "asset": asset} for f in lib.api("GET", f"/faces?id={asset}")
+                    if (f.get("person") or {}).get("id") == person_id]
+
+        # One call per photo: 8,500 of them for the largest person, which took
+        # minutes serially.
+        with cf.ThreadPoolExecutor(8) as ex:
+            return [f for found in ex.map(of, assets) for f in found]
 
     def merge(self, target: str, sources: list[str], *, why: str = "",
               ref: dict | None = None) -> dict | None:

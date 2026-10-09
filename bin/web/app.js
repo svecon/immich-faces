@@ -226,14 +226,22 @@ const people = {
     };
   },
   async apply() {
+    if (S.busy) return toast("Still working on the previous request…");
     const targets = people.targets();
     if (!targets.length) return toast("Tick at least one cluster");
+    S.busy = true;
+    $("#apply").disabled = true;
+    // A merge first records every face it moves (for undo): for a person with
+    // thousands of photos that takes a while, so say so instead of looking stuck.
+    toast(targets.length > 1 ? `Merging ${targets.length - 1} cluster(s) — recording faces for undo…`
+                             : "Applying…", 600000);
     try {
       await api(`/api/pairings/${S.detail.p.old.id}`, { action: "apply", targets, fields: people.fields() });
       toast(`Applied ${S.detail.p.old.name || "person"}`);
       await reload(true);
       move(1);
     } catch (e) { toast(e.message, 6000); await reload(true); }
+    finally { S.busy = false; }
   },
   async skip() {
     await api(`/api/pairings/${S.detail.p.old.id}`, { action: "skip" });
@@ -246,11 +254,13 @@ const people = {
     await reload(true);
   },
   async applyAll() {
+    if (S.busy) return toast("Still working on the previous request…");
     const todo = S.items.filter((p) => p.confident && !p.decision);
     if (!todo.length) return toast("No undecided confident pairings");
     if (!confirm(`Apply ${todo.length} confident pairings?\n\n` +
                  todo.map((p) => `${p.old.name || "(unnamed)"} — ${p.why}`).join("\n"))) return;
     let ok = 0, failed = 0;
+    S.busy = true;
     for (const p of todo) {
       try {
         await api(`/api/pairings/${p.old.id}`, { action: "apply", targets: p.targets, fields: {
@@ -259,6 +269,7 @@ const people = {
       } catch (e) { failed++; }
       toast(`Applying… ${ok + failed}/${todo.length}`);
     }
+    S.busy = false;
     toast(`Applied ${ok}${failed ? `, ${failed} failed — see the list` : ""}`, 5000);
     await reload(true);
   },
@@ -415,6 +426,7 @@ const review = {
     $("#selcount").textContent = n ? `${n} selected` : "";
   },
   async decide(how, to) {
+    if (S.busy) return toast("Still working on the previous request…");
     const ids = [...S.selected];
     if (!ids.length) return toast("Select faces first (a = all pending)");
     const paired = new Set(S.people.filter((x) => x.paired).map((x) => x.id));
@@ -428,7 +440,11 @@ const review = {
     }
     if (skipped.length) toast(`${skipped.length} face(s) had no paired old person — left selected`, 4000);
     if (!decisions.length) return;
-    const r = await api("/api/faces", { decisions });
+    S.busy = true;
+    toast(`Moving ${decisions.length} face(s)…`, 600000);
+    let r;
+    try { r = await api("/api/faces", { decisions }); }
+    finally { S.busy = false; }
     toast(`${r.ok} done${r.failed.length ? `, ${r.failed.length} failed: ${r.failed[0].error}` : ""}`, 4000);
     await reload(true);
     skipped.forEach((id) => S.selected.add(id));
