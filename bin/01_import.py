@@ -93,11 +93,16 @@ def check_references(db: sqlite3.Connection) -> list[str]:
 def check_people(db: sqlite3.Connection, api_people: list[dict]) -> tuple[str, list[str]]:
     """Compare the API's people with person.csv. Returns (ownerId, problems)."""
     ids = {p["id"] for p in api_people}
-    owners = {r["ownerId"] for r in db.execute("SELECT ownerId, personGroupId FROM person")
-              if r["personGroupId"] in ids}
+    # After joining a cluster group, one person group has a person row per
+    # user whose photos it appears in, so several owners share these ids. The
+    # key's owner is the one with a row for every person the API lists.
+    rows_by_owner: dict[str, set] = {}
+    for r in db.execute("SELECT ownerId, personGroupId FROM person"):
+        rows_by_owner.setdefault(r["ownerId"], set()).add(r["personGroupId"])
+    owners = [o for o, groups in rows_by_owner.items() if ids <= groups]
     if len(owners) != 1:
-        return "", [f"API people map to {len(owners)} owners in person.csv, expected 1"]
-    owner = owners.pop()
+        return "", [f"{len(owners)} owners in person.csv have every API person, expected 1"]
+    owner = owners[0]
 
     rows = {r["personGroupId"]: r for r in
             db.execute("SELECT * FROM person WHERE ownerId = ?", (owner,))}

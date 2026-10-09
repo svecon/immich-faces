@@ -63,14 +63,14 @@ Consequences this project is built on:
 mkdir -p ~/immich-faces-<label> && cd ~/immich-faces-<label>
 
 # Full backup — the undo-everything button. Only needed before the reset.
-docker exec -t immich_postgres pg_dumpall --clean --if-exists -U postgres \
+sudo docker exec -t immich_postgres pg_dumpall --clean --if-exists -U postgres \
   | gzip > immich-full-$(date +%F).sql.gz
 
 for t in person person_group asset_face tag tag_asset; do
-  docker exec immich_postgres psql -U postgres -d immich \
+  sudo docker exec immich_postgres psql -U postgres -d immich \
     -c "\copy \"$t\" to stdout with csv header" > "$t.csv"
 done
-docker exec immich_postgres psql -U postgres -d immich \
+sudo docker exec immich_postgres psql -U postgres -d immich \
   -c "\copy (select id, \"ownerId\", \"originalFileName\", \"originalPath\", type, visibility, \"deletedAt\" from asset) to stdout with csv header" > asset.csv
 ```
 

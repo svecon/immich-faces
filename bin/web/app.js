@@ -136,11 +136,12 @@ const people = {
     S.items = r.pairings;
   },
   group: (p) => KIND_LABEL[p.kind],
+  // "auto" = confident enough for Apply all; survivors can be too.
   row(p) {
     const st = p.decision?.status;
     return `<span>${esc(p.old.name || "(unnamed)")}</span>
             <span class="${st ? "st-" + st : "muted"}">${st || ""}</span>
-            <span class="sub">${p.total} faces · <span class="kind ${p.kind}">${p.kind}</span></span>`;
+            <span class="sub">${p.total} faces · <span class="kind ${p.kind}">${p.kind}</span>${p.confident ? ' · <span class="st-applied">auto</span>' : ""}</span>`;
   },
   async detail(p) {
     const dec = p.decision, applied = dec?.status === "applied";
@@ -245,7 +246,7 @@ const people = {
     await reload(true);
   },
   async applyAll() {
-    const todo = S.items.filter((p) => p.kind === "confident" && !p.decision);
+    const todo = S.items.filter((p) => p.confident && !p.decision);
     if (!todo.length) return toast("No undecided confident pairings");
     if (!confirm(`Apply ${todo.length} confident pairings?\n\n` +
                  todo.map((p) => `${p.old.name || "(unnamed)"} — ${p.why}`).join("\n"))) return;

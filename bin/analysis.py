@@ -29,6 +29,11 @@ MIN_FACES = 10
 # old person's faces (both conditions).
 SPLIT_MIN_FACES = 3
 SPLIT_MIN_SHARE = 0.05
+# A further cluster merges in without review when pure and at least this
+# much of it is the person's own old faces. Measured on the real reset: the
+# new clustering fragments people into pure pieces far more than it mixes.
+CLEAN_OWN_SHARE = 0.80
+CLEAN_MIN_FACES = 2
 
 TAG_PREFIX = "People/"
 TAKEOUT_PREFIX = "takeout-"
@@ -209,48 +214,78 @@ class Model:
             if clusters:
                 primary_of[clusters[0]["id"]].append(p.id)
 
+        claimed = {c: olds for c, olds in primary_of.items()}
         for prop in out:
-            prop["kind"], prop["why"] = self._classify(prop, primary_of)
-            prop["targets"] = self._default_targets(prop)
+            prop["targets"] = self._default_targets(prop, claimed)
+            prop["kind"], prop["why"], prop["confident"] = self._classify(prop, claimed)
         order = {"confident": 0, "survivor": 1, "split": 2, "blend": 3,
                  "weak": 4, "lost": 5}
-        out.sort(key=lambda x: (order[x["kind"]], -x["total"]))
+        out.sort(key=lambda x: (order[x["kind"]], not x["confident"], -x["total"]))
         return out
 
-    def _classify(self, prop, primary_of) -> tuple[str, str]:
-        cl = prop["clusters"]
-        if not cl:
-            return "lost", "no face of this person is assigned to anyone now"
-        top = cl[0]
-        if prop["survivor"]:
-            return "survivor", ("kept its name through manual faces; its "
-                                "recognised faces need merging back in")
-        shared = [x for x in primary_of[top["id"]] if x != prop["old"]["id"]]
-        if shared:
-            return "blend", "another old person ended up mostly in the same cluster"
-        if top["purity"] < MIN_PURITY:
-            return "blend", f"cluster is only {top['purity']:.0%} this person"
-        parts = [c for c in cl[1:] if c["faces"] >= SPLIT_MIN_FACES
-                 and c["coverage"] >= SPLIT_MIN_SHARE]
-        if parts:
-            return "split", f"spread over {len(parts) + 1} clusters"
-        if prop["total"] < MIN_FACES:
-            return "weak", f"only {prop['total']} faces to judge by"
-        if top["coverage"] < MIN_COVERAGE:
-            return "weak", f"only {top['coverage']:.0%} of faces in one cluster"
-        return "confident", (f"{top['coverage']:.0%} of faces in one cluster, "
-                             f"which is {top['purity']:.0%} this person")
+    @staticmethod
+    def _clean(c: dict) -> bool:
+        """A cluster that is safe to merge in: pure among named people, and
+        nearly all of it this person's old faces (the rest is new, e.g. the
+        other user's photos or faces nobody had)."""
+        return c["purity"] >= MIN_PURITY and c["faces"] >= CLEAN_MIN_FACES \
+            and c["faces"] / c["size"] >= CLEAN_OWN_SHARE
 
-    def _default_targets(self, prop) -> list[str]:
-        """Clusters to merge into this person, primary first."""
+    def _default_targets(self, prop, claimed) -> list[str]:
+        """Clusters to merge into this person, primary first.
+
+        Primary: the survivor itself, else the cluster holding most faces.
+        Plus every other clean cluster no one else has as their primary --
+        the new clustering fragments people rather than mixing them.
+        """
         cl = prop["clusters"]
+        me = prop["old"]["id"]
         if not cl:
-            return []
-        parts = [c["id"] for c in cl if c["faces"] >= SPLIT_MIN_FACES
-                 and c["coverage"] >= SPLIT_MIN_SHARE and c["purity"] >= MIN_PURITY]
+            return [me] if prop["survivor"] else []
+        primary = me if prop["survivor"] else cl[0]["id"]
+        mine_only = lambda c: not [o for o in claimed.get(c["id"], []) if o != me]
+        rest = [c["id"] for c in cl
+                if c["id"] != primary and self._clean(c) and mine_only(c)]
+        # The main cluster is exempt from the own-share test: it is where the
+        # new faces (other user's photos, faces nobody had) are meant to land.
+        # A survivor merges it in; for everyone else it already is the primary.
+        top = cl[0]
+        if prop["survivor"] and top["id"] != me and top["id"] not in rest \
+                and top["purity"] >= MIN_PURITY and mine_only(top):
+            rest.insert(0, top["id"])
+        return [primary] + rest
+
+    def _classify(self, prop, claimed) -> tuple[str, str, bool]:
+        """(kind, why, confident). `confident` may be applied without review."""
+        cl = prop["clusters"]
+        me = prop["old"]["id"]
+        if not cl:
+            return "lost", "no face of this person is assigned to anyone now", False
+        by_id = {c["id"]: c for c in cl}
+        took = sum(by_id[t]["faces"] for t in prop["targets"] if t in by_id)
+        cover = took / prop["total"] if prop["total"] else 0
+        top = cl[0]
+        shared = [o for o in claimed.get(top["id"], []) if o != me]
+        left = [c for c in cl if c["id"] not in prop["targets"]
+                and c["faces"] >= SPLIT_MIN_FACES and c["coverage"] >= SPLIT_MIN_SHARE]
+        merges = len(prop["targets"]) - 1
+        what = (f"{cover:.0%} of faces in {len(prop['targets'])} clean cluster"
+                f"{'s' if len(prop['targets']) > 1 else ''}"
+                + (f" ({merges} to merge)" if merges else ""))
+        if shared or top["purity"] < MIN_PURITY:
+            why = ("another old person ended up mostly in the same cluster" if shared
+                   else f"its main cluster is only {top['purity']:.0%} this person")
+            return "blend", why, False
+        if left:
+            return "split", f"{what}; {len(left)} more cluster(s) are mixed", False
+        confident = prop["total"] >= MIN_FACES and cover >= MIN_COVERAGE
         if prop["survivor"]:
-            return [prop["old"]["id"]] + [c for c in parts if c != prop["old"]["id"]]
-        return parts or [cl[0]["id"]]
+            return "survivor", f"kept its name through manual faces; {what}", confident
+        if prop["total"] < MIN_FACES:
+            return "weak", f"only {prop['total']} faces to judge by", False
+        if not confident:
+            return "weak", f"only {what}", False
+        return "confident", what, True
 
     def sample_faces(self, old: str | None, new: str | None, limit=24,
                      only_mine=True) -> list[dict]:
