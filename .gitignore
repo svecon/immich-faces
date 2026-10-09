@@ -1,0 +1,10 @@
+# Whitelist: only code and docs are tracked. Everything else in this folder --
+# snapshot/, after/, data/, databases, journals, thumbnails -- holds names,
+# birthdays and faces of real people and must never be committed.
+/*
+!/.gitignore
+!/bin/
+!/PLAN.md
+!/README.md
+__pycache__/
+*.pyc
