@@ -289,6 +289,64 @@ class App:
                     results["failed"].append({"face": fid, "error": str(e)})
         return results
 
+    # -- featured photo --------------------------------------------------
+    def featured(self):
+        pairing = self.confirmed_pairing()
+        done = {e["person"]: e["ts"] for e in writer.read_journal(self.writer.journal)
+                if e["op"] == "person.featured" and e["status"] in ("done", "skipped-dry-run")}
+        out = [{"id": old, "name": self.name_of(old), "person": cs[0], "set": done.get(cs[0])}
+               for old, cs in pairing.items()]
+        out.sort(key=lambda p: (p["set"] is not None, p["name"] == "(unnamed)",
+                                p["name"].casefold()))
+        return {"people": out}
+
+    def _live_assets(self, person: str) -> dict[str, dict]:
+        """This person's photos as Immich has them now: {asset id: date, type}."""
+        cache = self.__dict__.setdefault("_asset_cache", {})
+        if person not in cache:
+            found, page = {}, 1
+            while True:
+                r = lib.api("POST", "/search/metadata",
+                            {"personIds": [person], "size": 1000, "page": page})
+                for a in r["assets"]["items"]:
+                    found[a["id"]] = {"date": (a.get("localDateTime") or a.get("fileCreatedAt") or "")[:10],
+                                      "type": a.get("type"), "visibility": a.get("visibility")}
+                nxt = r["assets"].get("nextPage")
+                if not nxt:
+                    break
+                page = int(nxt)
+            cache[person] = found
+        return cache[person]
+
+    def featured_detail(self, old: str):
+        """Every face of this person on a timeline photo, with what scoring needs.
+
+        Scoring itself is in the page, so the weight slider re-ranks instantly.
+        """
+        pairing = self.confirmed_pairing()
+        if old not in pairing:
+            raise ValueError("person has no applied pairing")
+        person = pairing[old][0]
+        live = self._live_assets(person)
+        clusters = set(pairing[old])
+        faces = []
+        for f in self.model.faces.values():
+            a = live.get(f.asset)
+            if not a or f.new not in clusters or a["visibility"] != "timeline" or not a["date"]:
+                continue
+            h = (f.box[3] - f.box[1]) / f.size[1] if f.size[1] else 0
+            faces.append({**self.model.face_json(f), "date": a["date"], "type": a["type"],
+                          "height": round(h, 4)})
+        p = self.model.old[old]
+        return {"id": old, "name": self.name_of(old), "person": person,
+                "birthDate": p.birth or None, "faces": faces}
+
+    def set_featured(self, old: str, asset: str):
+        person = self.confirmed_pairing()[old][0]
+        with self.write_lock:
+            self.writer.set_featured(person, asset, why=f"featured {self.name_of(old)}")
+        return {"ok": True}
+
     def people(self):
         pairing = self.confirmed_pairing()
         return {"people": sorted(({"id": o, "name": self.name_of(o),
@@ -368,6 +426,7 @@ class Handler(BaseHTTPRequestHandler):
             routes = {
                 "/api/status": app.status, "/api/pairings": app.pairings,
                 "/api/tags": app.tags, "/api/review": app.review, "/api/people": app.people,
+                "/api/featured": app.featured,
             }
             if p in routes:
                 return self._json(routes[p]())
@@ -375,6 +434,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(app.tag_detail(m[1], q.get("person")))
             if m := re.fullmatch(rf"/api/review/({UUID})", p):
                 return self._json(app.review_person(m[1]))
+            if m := re.fullmatch(rf"/api/featured/({UUID})", p):
+                return self._json(app.featured_detail(m[1]))
+            if m := re.fullmatch(rf"/live-thumb/({UUID})", p):
+                # The current thumbnail, never cached: it changes when set.
+                data = lib.api("GET", f"/people/{m[1]}/thumbnail", raw=True)
+                return self._send(200, data, "image/jpeg")
 
         if method == "POST":
             b = self._body()
@@ -393,6 +458,8 @@ class Handler(BaseHTTPRequestHandler):
                 app.state.set_tag(m[1], b.get("person"), b.get("trusted"))
                 app.sync_tag_names()
                 return self._json({})
+            if m := re.fullmatch(rf"/api/featured/({UUID})", p):
+                return self._json(app.set_featured(m[1], b["asset"]))
             if p == "/api/faces":
                 return self._json(app.decide_faces(b["decisions"]))
 

@@ -188,6 +188,21 @@ class Writer:
         self._log({"seq": entry["seq"], "status": "created", "person": created.get("id")})
         return created.get("id")
 
+    def set_featured(self, person_id: str, asset_id: str, *, why: str = "") -> dict:
+        """Make this person's face on `asset_id` their featured photo.
+
+        Not verifiable synchronously: Immich regenerates the thumbnail in a
+        background job, and the person response does not expose which face is
+        featured. Not reversible by undo.py either -- the previous choice is
+        not readable -- but choosing another photo is the undo.
+        """
+        before = None if self.dry_run else lib.api("GET", f"/people/{person_id}").get("thumbnailPath")
+        return self._run(
+            {"op": "person.featured", "person": person_id, "asset": asset_id,
+             "before": {"thumbnailPath": before}, "why": why},
+            lambda: lib.api("PUT", f"/people/{person_id}", {"featureFaceAssetId": asset_id}),
+            lambda: "")
+
     def mark_undone(self, seq: int, by: str) -> None:
         self._log({"seq": seq, "status": "undone", "by": by})
 

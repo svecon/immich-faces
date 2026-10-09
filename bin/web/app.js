@@ -85,6 +85,7 @@ async function loadStatus() {
 
 async function show(view) {
   S.view = view;
+  history.replaceState(null, "", `#${view}`);
   S.cur = 0;
   $$("nav button").forEach((b) => b.setAttribute("aria-current", b.dataset.view === view));
   await reload();
@@ -470,11 +471,97 @@ const review = {
   },
 };
 
-const VIEWS = { people, tags, review };
+// ------------------------------------------------------------ featured --
+// Score = size^w × recency^(1-w): a weighted geometric mean, so a photo has to
+// be decent on both counts -- a huge face from 2009 does not beat everything.
+const SIZE_FULL = 0.4;        // face 40% of the photo's height scores 1
+const HALF_LIFE_YEARS = 3;    // recency halves every 3 years before the latest photo
+const MIN_AGE_YEARS = 5;      // with a birthday known, younger photos are left out
+
+const featured = {
+  empty: "No applied pairings yet.",
+  weight: 0.5,
+  async load() { S.items = (await api("/api/featured")).people; },
+  group: (p) => (p.set ? "Featured photo set" : "To choose"),
+  row: (p) => `<span>${esc(p.name)}</span><span class="st-applied">${p.set ? "set" : ""}</span>`,
+  async detail(p) {
+    $("#detail").innerHTML = `<h2>${esc(p.name)}</h2><p class="muted">Loading this person's photos from Immich…</p>`;
+    const d = await api(`/api/featured/${p.id}`);
+    S.detail = d;
+    featured.render();
+  },
+  score(d) {
+    const years = (a, b) => (Date.parse(a) - Date.parse(b)) / 3.15576e10;
+    const latest = d.faces.reduce((m, f) => (f.date > m ? f.date : m), "");
+    const w = featured.weight;
+    return d.faces
+      .filter((f) => !d.birthDate || years(f.date, d.birthDate) >= MIN_AGE_YEARS)
+      .map((f) => {
+        const size = Math.min(f.height / SIZE_FULL, 1);
+        const recency = 0.5 ** (Math.max(years(latest, f.date), 0) / HALF_LIFE_YEARS);
+        return { ...f, sizeScore: size, recency, score: size ** w * recency ** (1 - w) };
+      })
+      .sort((a, b) => b.score - a.score);
+  },
+  render() {
+    const d = S.detail, ranked = featured.score(d).slice(0, 36);
+    const excluded = d.birthDate ? d.faces.length - featured.score(d).length : 0;
+    $("#detail").innerHTML = `
+      <div class="person-head">
+        <img src="/live-thumb/${d.person}?t=${Date.now()}" alt="current featured photo">
+        <div>
+          <h2>${esc(d.name)}</h2>
+          <div class="muted">Current featured photo on the left · ${d.faces.length} faces on timeline photos
+            ${excluded ? ` · ${excluded} taken before age ${MIN_AGE_YEARS} left out` : ""}</div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <label for="weight">Recency</label>
+        <input id="weight" type="range" min="0" max="1" step="0.05" value="${featured.weight}">
+        <label for="weight">Face size</label>
+        <span class="muted">— click a photo, or press <kbd>1</kbd>–<kbd>9</kbd>, to make it the featured one</span>
+      </div>
+      <div class="grid">${ranked.map((f, i) => `
+        <div class="card" data-face="${f.id}" data-asset="${f.asset}">${faceHTML(f)}
+          <div class="lbl">${i < 9 ? `<kbd>${i + 1}</kbd> ` : ""}${f.date.slice(0, 4)} · face ${Math.round(f.height * 100)}%</div>
+          <div class="lbl muted">score ${f.score.toFixed(2)}</div></div>`).join("")}</div>`;
+    hydrate($("#detail"));
+    $("#weight").addEventListener("input", (e) => {
+      featured.weight = +e.target.value;
+      featured.render();
+      $("#weight").focus();
+    });
+    $$("#detail .card").forEach((c) => c.addEventListener("click", () => featured.choose(c.dataset.asset)));
+  },
+  async choose(asset) {
+    if (S.busy) return;
+    S.busy = true;
+    try {
+      await api(`/api/featured/${S.detail.id}`, { asset });
+      toast("Featured photo set — Immich regenerates the thumbnail in a moment", 4000);
+      setTimeout(() => { const img = $(".person-head img"); if (img) img.src = `/live-thumb/${S.detail.person}?t=${Date.now()}`; }, 3000);
+      const cur = S.items[S.cur];
+      cur.set = true;
+      renderList();
+    } catch (e) { toast(e.message, 6000); }
+    finally { S.busy = false; }
+  },
+  key(e) {
+    if (/^[1-9]$/.test(e.key)) {
+      const card = $$("#detail .card")[+e.key - 1];
+      if (card) featured.choose(card.dataset.asset);
+      return true;
+    }
+    return false;
+  },
+};
+
+const VIEWS = { people, tags, review, featured };
 
 // ------------------------------------------------------------- wiring --
 document.addEventListener("keydown", (e) => {
   if (e.target.matches("input[type=text], input[type=date], select") && e.key !== "Escape") return;
+  if (e.target.matches("input[type=range]") && e.key.startsWith("Arrow")) return;
   if (e.ctrlKey || e.metaKey || e.altKey || $("dialog[open]")) return;
   if (VIEWS[S.view].key?.(e)) return e.preventDefault();
   const k = e.key;
@@ -483,6 +570,7 @@ document.addEventListener("keydown", (e) => {
   else if (k === "p") show("people");
   else if (k === "t") show("tags");
   else if (k === "r") show("review");
+  else if (k === "f") show("featured");
   else if (k === "?") $("#help").showModal();
   else if (k === "v" && S.hover) showHover();
   else return;
@@ -509,5 +597,6 @@ $("#help-btn").addEventListener("click", () => $("#help").showModal());
 
 (async () => {
   await loadStatus();
-  await show(S.status.hasAfter ? "people" : "tags");
+  const fromHash = location.hash.slice(1);
+  await show(VIEWS[fromHash] ? fromHash : S.status.hasAfter ? "people" : "tags");
 })();
