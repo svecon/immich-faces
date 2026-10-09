@@ -380,6 +380,7 @@ const review = {
     const d = await api(`/api/review/${p.id}`);
     S.detail = d;
     S.faces = new Map([...d.left, ...d.joined].map((f) => [f.id, f]));
+    S.side = new Map([...d.left.map((f) => [f.id, "left"]), ...d.joined.map((f) => [f.id, "joined"])]);
     const card = (f, side) => {
       // Green when a trusted tag on the photo names this person.
       const tagged = f.tags.length ? `<div class="tagchip ${f.tags.includes(d.name) ? "" : "disagree"}">tag: ${esc(f.tags.join(", "))}</div>` : "";
@@ -390,11 +391,12 @@ const review = {
     };
     $("#detail").innerHTML = `
       <h2>${esc(d.name)}</h2>
-      <p class="muted">Select faces, then <kbd>o</kbd> put them back on their old person, or <kbd>n</kbd> keep the new assignment.
-        Immich cannot un-assign a face, so a wrong face can only be moved to someone else.</p>
+      <p class="muted">Select faces, then answer for all of them: <kbd>y</kbd> they are ${esc(d.name)}, or
+        <kbd>x</kbd> they are not. Immich cannot un-assign a face, so a face that is nobody you know
+        can only be moved to someone else (or left where it is).</p>
       <div class="toolbar">
-        <button id="restore"><kbd>o</kbd> Restore old person</button>
-        <button id="keep"><kbd>n</kbd> Keep new</button>
+        <button id="yes" class="primary"><kbd>y</kbd> This is ${esc(d.name)}</button>
+        <button id="no"><kbd>x</kbd> Not ${esc(d.name)}</button>
         <select id="moveto"><option value="">Move to…</option>${S.people.filter((x) => x.paired).map((x) =>
           `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
         <span class="muted" id="selcount"></span>
@@ -403,8 +405,8 @@ const review = {
       <div class="grid" data-side="left">${d.left.map((f) => card(f, "left")).join("") || '<p class="muted">None.</p>'}</div>
       <h3>Joined ${esc(d.name)} — now this person, was not before (${d.joined.length})</h3>
       <div class="grid" data-side="joined">${d.joined.map((f) => card(f, "joined")).join("") || '<p class="muted">None.</p>'}</div>`;
-    $("#restore").addEventListener("click", () => review.decide("restore"));
-    $("#keep").addEventListener("click", () => review.decide("keep"));
+    $("#yes").addEventListener("click", () => review.decide("is"));
+    $("#no").addEventListener("click", () => review.decide("isnt"));
     $("#moveto").addEventListener("change", (e) => e.target.value && review.decide("move", e.target.value));
     $$("#detail .card").forEach((c) => c.addEventListener("click", (e) => review.click(c, e)));
     review.paintSel();
@@ -429,16 +431,22 @@ const review = {
     if (S.busy) return toast("Still working on the previous request…");
     const ids = [...S.selected];
     if (!ids.length) return toast("Select faces first (a = all pending)");
+    // "is"/"isnt" answer the question "is this face the person on screen?";
+    // what that means in Immich depends on the section the face is in:
+    //   left   (was this person, now elsewhere): is -> move back, isnt -> leave
+    //   joined (now this person, was not):       is -> leave,     isnt -> back to old person
     const paired = new Set(S.people.filter((x) => x.paired).map((x) => x.id));
-    const decisions = [], skipped = [];
+    const me = S.detail.id, decisions = [], skipped = [];
     for (const id of ids) {
-      const f = S.faces.get(id);
-      if (how === "keep") decisions.push({ face: id, action: "keep" });
-      else if (how === "move") decisions.push({ face: id, action: "move", person: to });
+      const f = S.faces.get(id), side = S.side.get(id);
+      if (how === "move") decisions.push({ face: id, action: "move", person: to });
+      else if ((how === "is") === (side === "joined")) decisions.push({ face: id, action: "keep" });
+      else if (how === "is") decisions.push({ face: id, action: "move", person: me });
       else if (paired.has(f.old)) decisions.push({ face: id, action: "move", person: f.old });
       else skipped.push(id);
     }
-    if (skipped.length) toast(`${skipped.length} face(s) had no paired old person — left selected`, 4000);
+    if (skipped.length) toast(`${skipped.length} face(s) were nobody before — pick someone with "Move to…", ` +
+                              `or leave them; they stay selected`, 6000);
     if (!decisions.length) return;
     S.busy = true;
     toast(`Moving ${decisions.length} face(s)…`, 600000);
@@ -455,8 +463,8 @@ const review = {
       $$("#detail .card:not(.done)").forEach((c) => S.selected.add(c.dataset.face));
       review.paintSel();
     } else if (e.key === "Escape") { S.selected.clear(); review.paintSel(); }
-    else if (e.key === "o") review.decide("restore");
-    else if (e.key === "n") review.decide("keep");
+    else if (e.key === "y") review.decide("is");
+    else if (e.key === "x") review.decide("isnt");
     else return false;
     return true;
   },
