@@ -538,11 +538,15 @@ const featured = {
     S.busy = true;
     try {
       await api(`/api/featured/${S.detail.id}`, { asset });
-      toast("Featured photo set — Immich regenerates the thumbnail in a moment", 4000);
-      setTimeout(() => { const img = $(".person-head img"); if (img) img.src = `/live-thumb/${S.detail.person}?t=${Date.now()}`; }, 3000);
-      const cur = S.items[S.cur];
-      cur.set = true;
+      toast(`Featured photo set for ${S.detail.name}`, 3000);
+      S.items[S.cur].set = true;
       renderList();
+      // On to the next person still without one: after this one, else from the top.
+      const unset = (i) => !S.items[i].set;
+      const idx = [...S.items.keys()];
+      const next = idx.find((i) => i > S.cur && unset(i)) ?? idx.find(unset);
+      if (next === undefined) toast("Every person has a featured photo now", 4000);
+      else await select(next);
     } catch (e) { toast(e.message, 6000); }
     finally { S.busy = false; }
   },
