@@ -478,9 +478,12 @@ const SIZE_FULL = 0.4;        // face 40% of the photo's height scores 1
 const HALF_LIFE_YEARS = 3;    // recency halves every 3 years before the latest photo
 const MIN_AGE_YEARS = 5;      // with a birthday known, younger photos are left out
 
+const FEATURED_PAGE = 60;     // candidates shown at first, and added by "Show more"
+
 const featured = {
   empty: "No applied pairings yet.",
   weight: 0.5,
+  limit: FEATURED_PAGE,
   async load() { S.items = (await api("/api/featured")).people; },
   group: (p) => (p.set ? "Featured photo set" : "To choose"),
   row: (p) => `<span>${esc(p.name)}</span><span class="st-applied">${p.set ? "set" : ""}</span>`,
@@ -488,6 +491,7 @@ const featured = {
     $("#detail").innerHTML = `<h2>${esc(p.name)}</h2><p class="muted">Loading this person's photos from Immich…</p>`;
     const d = await api(`/api/featured/${p.id}`);
     S.detail = d;
+    featured.limit = FEATURED_PAGE;
     featured.render();
   },
   score(d) {
@@ -504,8 +508,8 @@ const featured = {
       .sort((a, b) => b.score - a.score);
   },
   render() {
-    const d = S.detail, ranked = featured.score(d).slice(0, 36);
-    const excluded = d.birthDate ? d.faces.length - featured.score(d).length : 0;
+    const d = S.detail, all = featured.score(d), ranked = all.slice(0, featured.limit);
+    const excluded = d.birthDate ? d.faces.length - all.length : 0;
     $("#detail").innerHTML = `
       <div class="person-head">
         <img src="/live-thumb/${d.person}?t=${Date.now()}" alt="current featured photo">
@@ -524,7 +528,9 @@ const featured = {
       <div class="grid">${ranked.map((f, i) => `
         <div class="card" data-face="${f.id}" data-asset="${f.asset}">${faceHTML(f)}
           <div class="lbl">${i < 9 ? `<kbd>${i + 1}</kbd> ` : ""}${f.date.slice(0, 4)} · face ${Math.round(f.height * 100)}%</div>
-          <div class="lbl muted">score ${f.score.toFixed(2)}</div></div>`).join("")}</div>`;
+          <div class="lbl muted">score ${f.score.toFixed(2)}</div></div>`).join("")}</div>
+      ${all.length > ranked.length ? `<div class="toolbar"><button id="more">Show more
+        <span class="muted">(${ranked.length} of ${all.length})</span></button></div>` : ""}`;
     hydrate($("#detail"));
     $("#weight").addEventListener("input", (e) => {
       featured.weight = +e.target.value;
@@ -532,6 +538,12 @@ const featured = {
       $("#weight").focus();
     });
     $$("#detail .card").forEach((c) => c.addEventListener("click", () => featured.choose(c.dataset.asset)));
+    $("#more")?.addEventListener("click", () => {
+      const y = $("#detail").scrollTop;
+      featured.limit += FEATURED_PAGE;
+      featured.render();
+      $("#detail").scrollTop = y;
+    });
   },
   async choose(asset) {
     if (S.busy) return;
