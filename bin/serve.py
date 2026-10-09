@@ -53,6 +53,8 @@ class State:
         tag TEXT PRIMARY KEY, person TEXT, trusted INTEGER, ts TEXT);
     CREATE TABLE IF NOT EXISTS face (
         face TEXT PRIMARY KEY, action TEXT, target TEXT, error TEXT, ts TEXT);
+    CREATE TABLE IF NOT EXISTS featured_keep (
+        person TEXT PRIMARY KEY, ts TEXT);
     """
 
     def __init__(self, path: Path):
@@ -91,6 +93,16 @@ class State:
         with self.lock:
             self.db.execute("INSERT OR REPLACE INTO tag VALUES (?,?,?,?)",
                             (tag, person, trusted, self.now()))
+            self.db.commit()
+
+    def kept_featured(self) -> dict[str, str]:
+        """People whose current featured photo you chose to keep."""
+        with self.lock:
+            return dict(self.db.execute("SELECT person, ts FROM featured_keep").fetchall())
+
+    def keep_featured(self, person):
+        with self.lock:
+            self.db.execute("INSERT OR REPLACE INTO featured_keep VALUES (?,?)", (person, self.now()))
             self.db.commit()
 
     def faces(self) -> dict[str, dict]:
@@ -292,8 +304,10 @@ class App:
     # -- featured photo --------------------------------------------------
     def featured(self):
         pairing = self.confirmed_pairing()
+        # Done = a photo was set (journal) or the current one kept (state.db).
         done = {e["person"]: e["ts"] for e in writer.read_journal(self.writer.journal)
                 if e["op"] == "person.featured" and e["status"] in ("done", "skipped-dry-run")}
+        done.update(self.state.kept_featured())
         out = [{"id": old, "name": self.name_of(old), "person": cs[0], "set": done.get(cs[0])}
                for old, cs in pairing.items()]
         out.sort(key=lambda p: (p["set"] is not None, p["name"] == "(unnamed)",
@@ -459,6 +473,9 @@ class Handler(BaseHTTPRequestHandler):
                 app.sync_tag_names()
                 return self._json({})
             if m := re.fullmatch(rf"/api/featured/({UUID})", p):
+                if b.get("keep"):
+                    app.state.keep_featured(app.confirmed_pairing()[m[1]][0])
+                    return self._json({"ok": True})
                 return self._json(app.set_featured(m[1], b["asset"]))
             if p == "/api/faces":
                 return self._json(app.decide_faces(b["decisions"]))

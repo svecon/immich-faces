@@ -524,6 +524,8 @@ const featured = {
         <input id="weight" type="range" min="0" max="1" step="0.05" value="${featured.weight}">
         <label for="weight">Face size</label>
         <span class="muted">— click a photo, or press <kbd>1</kbd>–<kbd>9</kbd>, to make it the featured one</span>
+        <span style="flex:1"></span>
+        <button id="keep-current"><kbd>Enter</kbd> Keep current</button>
       </div>
       <div class="grid">${ranked.map((f, i) => `
         <div class="card" data-face="${f.id}" data-asset="${f.asset}">${faceHTML(f)}
@@ -538,6 +540,7 @@ const featured = {
       $("#weight").focus();
     });
     $$("#detail .card").forEach((c) => c.addEventListener("click", () => featured.choose(c.dataset.asset)));
+    $("#keep-current").addEventListener("click", featured.keep);
     $("#more")?.addEventListener("click", () => {
       const y = $("#detail").scrollTop;
       featured.limit += FEATURED_PAGE;
@@ -551,16 +554,30 @@ const featured = {
     try {
       await api(`/api/featured/${S.detail.id}`, { asset });
       toast(`Featured photo set for ${S.detail.name}`, 3000);
-      S.items[S.cur].set = true;
-      renderList();
-      // On to the next person still without one: after this one, else from the top.
-      const unset = (i) => !S.items[i].set;
-      const idx = [...S.items.keys()];
-      const next = idx.find((i) => i > S.cur && unset(i)) ?? idx.find(unset);
-      if (next === undefined) toast("Every person has a featured photo now", 4000);
-      else await select(next);
+      await featured.next();
     } catch (e) { toast(e.message, 6000); }
     finally { S.busy = false; }
+  },
+  async keep() {
+    if (S.busy) return;
+    S.busy = true;
+    try {
+      await api(`/api/featured/${S.detail.id}`, { keep: true });
+      toast(`Kept the current photo for ${S.detail.name}`, 3000);
+      await featured.next();
+    } catch (e) { toast(e.message, 6000); }
+    finally { S.busy = false; }
+  },
+  // Mark this person done and go to the next one still to do: after this
+  // one, else from the top.
+  async next() {
+    S.items[S.cur].set = true;
+    renderList();
+    const unset = (i) => !S.items[i].set;
+    const idx = [...S.items.keys()];
+    const next = idx.find((i) => i > S.cur && unset(i)) ?? idx.find(unset);
+    if (next === undefined) toast("Every person has a featured photo now", 4000);
+    else await select(next);
   },
   key(e) {
     if (/^[1-9]$/.test(e.key)) {
@@ -568,6 +585,7 @@ const featured = {
       if (card) featured.choose(card.dataset.asset);
       return true;
     }
+    if (e.key === "Enter") { featured.keep(); return true; }
     return false;
   },
 };
