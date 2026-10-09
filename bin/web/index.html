@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Face Reset Audit</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <h1>Face reset audit</h1>
+  <nav>
+    <button data-view="people"><kbd>p</kbd> People</button>
+    <button data-view="tags"><kbd>t</kbd> Google tags</button>
+    <button data-view="review"><kbd>r</kbd> Face review</button>
+  </nav>
+  <span id="mode" class="badge"></span>
+  <button id="help-btn" title="Keyboard shortcuts"><kbd>?</kbd></button>
+</header>
+<main>
+  <aside id="list" tabindex="-1"></aside>
+  <section id="detail"></section>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+<dialog id="help">
+  <h2>Keyboard</h2>
+  <table>
+    <tr><th colspan="2">Everywhere</th></tr>
+    <tr><td><kbd>p</kbd> <kbd>t</kbd> <kbd>r</kbd></td><td>People · Tags · Review</td></tr>
+    <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>Next / previous item in the list</td></tr>
+    <tr><td><kbd>v</kbd> or double-click</td><td>Show the whole photo for the face under the mouse</td></tr>
+    <tr><th colspan="2">People</th></tr>
+    <tr><td><kbd>1</kbd>–<kbd>6</kbd></td><td>Toggle a cluster in or out of the merge</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Apply: merge the ticked clusters, restore name and birthday</td></tr>
+    <tr><td><kbd>s</kbd> / <kbd>u</kbd></td><td>Skip / un-decide</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>A</kbd></td><td>Apply every undecided confident pairing</td></tr>
+    <tr><th colspan="2">Google tags</th></tr>
+    <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>Pick the candidate person</td></tr>
+    <tr><td><kbd>y</kbd> / <kbd>n</kbd> / <kbd>u</kbd></td><td>Trusted / not trusted / un-decide</td></tr>
+    <tr><th colspan="2">Face review</th></tr>
+    <tr><td>click, <kbd>Shift</kbd>+click</td><td>Select a face, a range</td></tr>
+    <tr><td><kbd>a</kbd> / <kbd>Esc</kbd></td><td>Select all pending / clear selection</td></tr>
+    <tr><td><kbd>o</kbd></td><td>Restore: put selected faces back on their old person</td></tr>
+    <tr><td><kbd>n</kbd></td><td>Keep new: accept selected faces where they are now</td></tr>
+    <tr><td>Move to…</td><td>Put selected faces on any paired person</td></tr>
+  </table>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+<dialog id="photo"><img alt=""><div class="box"></div><p></p></dialog>
+<script src="/app.js"></script>
+</body>
+</html>

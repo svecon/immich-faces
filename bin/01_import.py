@@ -32,7 +32,8 @@ import lib
 SAMPLE_ASSETS = 40
 
 INDEXES = [
-    ("asset_face", "assetId"), ("asset_face", "personGroupId"),
+    ("asset_face", "id"), ("asset_face", "assetId"), ("asset_face", "personGroupId"),
+    ("asset", "id"), ("tag", "id"),
     ("person", "personGroupId"), ("person", "ownerId"),
     ("tag_asset", "assetId"), ("tag_asset", "tagId"),
 ]
