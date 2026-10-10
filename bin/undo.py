@@ -36,6 +36,9 @@ def describe(e: dict) -> str:
     if op == "person.merge":
         n = sum(len(v["faces"]) for v in (e.get("before") or {}).values())
         return f"merge {len(e['sources'])} person(s), {n} faces, into {e['target'][:8]}"
+    if op == "face.refresh":
+        n = sum(len(v) for v in (e.get("added") or {}).values())
+        return f"refresh faces on {len(e['assets'])} asset(s), {n} added"
     if op == "face.delete":
         return f"delete face {e['face'][:8]} on asset {e['asset'][:8]}"
     if op == "person.create":
@@ -63,6 +66,18 @@ def reverse(w: writer.Writer, e: dict) -> str:
                 w.reassign(f["face"], f["asset"], new, why=why)
             out.append(f"{src[:8]} recreated as {new} with {len(b['faces'])} faces")
         return "; ".join(out)
+    if op == "face.refresh":
+        gone = []
+        for asset, faces in (e.get("added") or {}).items():
+            for fid in faces:
+                try:
+                    w.delete_face(fid, asset, why=why)
+                    gone.append(fid)
+                except writer.WriteError:
+                    pass        # already deleted
+        removed = sum(len(v) for v in (e.get("removed") or {}).values())
+        return (f"deleted {len(gone)} added face(s)"
+                + (f"; {removed} face(s) the refresh removed cannot be restored" if removed else ""))
     if op == "face.delete":
         return ("SKIPPED: Immich cannot restore a deleted face; the journal entry has its "
                 "box if you want to redraw it by hand")
@@ -78,6 +93,10 @@ def clear_decision(e: dict, state_path) -> None:
         db.execute("DELETE FROM pairing WHERE old = ?", (ref["pairing"],))
     if "face" in ref:
         db.execute("DELETE FROM face WHERE face = ?", (ref["face"],))
+    if "missing" in ref:
+        tag, asset = ref["missing"]
+        db.execute("UPDATE missing SET verdict = NULL, face = NULL WHERE tag = ? AND asset = ?",
+                   (tag, asset))
     db.commit()
     db.close()
 

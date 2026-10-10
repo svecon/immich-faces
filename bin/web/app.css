@@ -85,6 +85,23 @@ dialog#help th { padding-top: 10px; color: var(--muted); font-weight: 600; }
 dialog#photo { padding: 8px; max-width: 92vw; max-height: 92vh; }
 dialog#photo img { display: block; max-width: 88vw; max-height: 84vh; }
 dialog#photo .box { position: absolute; border: 2px solid #ff0; box-shadow: 0 0 0 1px #000; pointer-events: none; }
+#banner { background: var(--bad); color: #fff; padding: 6px 16px; font-weight: 600; }
+.panel { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 10px 0; background: var(--panel); }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.mcard { border: 2px solid transparent; border-radius: 8px; padding: 6px; background: var(--panel); }
+.mcard.cur { border-color: var(--sel); }
+.mphoto { position: relative; width: 100%; max-height: 70vh; background-size: 100% 100% !important; }
+.fbox { position: absolute; border: 2px solid #fff; box-shadow: 0 0 0 1px #000; border-radius: 3px; cursor: pointer; }
+.fbox span { position: absolute; top: -18px; left: -2px; font-size: 11px; background: #000; color: #fff;
+             padding: 0 4px; border-radius: 3px; white-space: nowrap; }
+.fbox.named { border-color: #bbb; border-style: dashed; }
+.fbox.added { border-color: var(--warn); }
+.fbox.pick { border-color: var(--ok); border-width: 3px; }
+.fbox.pick span { background: var(--ok); }
+.mfoot { display: flex; justify-content: space-between; gap: 8px; margin: 4px 0; font-size: 12px; }
+.mfoot .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mverdict { font-weight: 600; white-space: nowrap; }
+.v-face { color: var(--ok); } .v-wrong { color: var(--bad); } .v-notdetected { color: var(--warn); }
 @media (max-width: 760px) {
   main { grid-template-columns: 1fr; grid-template-rows: 35vh 1fr; }
   aside { border-right: 0; border-bottom: 1px solid var(--line); }

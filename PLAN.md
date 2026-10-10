@@ -146,7 +146,7 @@ before — see immich-av1 `DEFECTS.md`).
 | faces added by a refresh | yes — delete them (`DELETE /faces/{id}`) |
 | anything else | `pg_dumpall` restore — the whole instance, a last resort |
 
-### 4 · missing faces of tagged people — **planned**
+### 4 · missing faces of tagged people — **built** (view *Missing faces*, `m`)
 
 Google `People/…` tags are mostly right, but on many tagged photos Immich has
 no face of the tagged person: never detected (too small, blurred, turned away,
@@ -188,9 +188,13 @@ A new web view, *Missing faces*: one row per `People/…` tag matched to a
 person, with its tally and how many photos are untested.
 
 **1 · Review a round** (no settings change). The next N untested photos of the
-tag (photos only, oldest first), against the live faces. Each photo is shown
+tag (photos only, in a stable random order so each round is a fair sample of
+the tag), against the live faces. Each photo is shown
 whole, its faces boxed and ranked by similarity to the tagged person; the best
-unassigned or wrongly assigned face is preselected. One verdict per photo:
+unassigned face is preselected only when convincing — its cluster is close to
+the person (similarity ≥ 0.4), or it is the photo's only unnamed face.
+Otherwise the photo waits for a choice, and unanswered photos return in a
+later round. One verdict per photo:
 
 | Verdict | Effect | Counts as |
 |---|---|---|
@@ -205,22 +209,22 @@ none unassigned) goes straight to *not detected*.
 **2 · Detection round** (you change the threshold). When photos are queued:
 
 1. You lower *Administration → Machine Learning → Facial Recognition →
-   Min detection score* from 0.7 to ~0.4 and press *Threshold lowered*. The
-   page shows a red banner from then until step 5.
+   Min detection score* from 0.7 to ~0.4. The key reads the setting
+   (`systemConfig.read`), so the page notices by itself: *Run detection*
+   unlocks at 0.5 or less, and a red banner shows on every view while the
+   score is below 0.7.
 2. The script records each queued photo's faces (id, box, person) in the
    journal: the baseline for the diff and for undo.
 3. It sends `POST /assets/jobs {name: "refresh-faces", assetIds}` — one
    detection job per photo — polls the queues until face detection and
    recognition are idle, and diffs each photo against its baseline. The first
-   round goes one photo at a time; later rounds in batches of up to ~100.
-   Any existing face that disappears stops the round.
-4. The refreshed photos return to the review, with the added faces marked.
-   An added face that is not the person can be deleted — undoable, since it
-   did not exist before. Photos where even 0.4 found nothing new are closed
-   as *not detectable*.
-5. You restore the score to 0.7 and press *Threshold restored*. The key cannot
-   read the setting, so the page relies on you and keeps the banner up until
-   then.
+   5 photos ever go one at a time; after that, batches of up to 100. Any
+   existing face that disappears stops the round, and so does the score going
+   back above 0.5.
+4. The refreshed photos return to the review first, with the added faces
+   marked. *Not detected* on a refreshed photo closes it as *undetectable*.
+   Photos where detection added nothing are closed the same way.
+5. You restore the score to 0.7; the banner goes away.
 
 Detection rounds pool the queued photos of every tag, so the threshold goes
 down once per session rather than once per tag.
@@ -247,6 +251,8 @@ Tags view shows it, replacing the up-front trusted checkbox for this purpose.
   `face_search` export for faces on tagged photos, re-exported after each
   detection round for the added faces (command to be written).
 - You, at the threshold setting, for each detection round.
+- Added junk faces are not deleted from this view; they land in unnamed
+  clusters, where the Clusters view's *Not a face* removes them.
 
 #### Undo
 

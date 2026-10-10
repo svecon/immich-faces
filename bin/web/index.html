@@ -15,10 +15,12 @@
     <button data-view="review"><kbd>r</kbd> Face review</button>
     <button data-view="featured"><kbd>f</kbd> Featured photo</button>
     <button data-view="clusters"><kbd>c</kbd> Clusters</button>
+    <button data-view="missing"><kbd>m</kbd> Missing faces</button>
   </nav>
   <span id="mode" class="badge"></span>
   <button id="help-btn" title="Keyboard shortcuts"><kbd>?</kbd></button>
 </header>
+<div id="banner" hidden></div>
 <main>
   <aside id="list" tabindex="-1"></aside>
   <section id="detail"></section>
@@ -29,6 +31,7 @@
   <table>
     <tr><th colspan="2">Everywhere</th></tr>
     <tr><td><kbd>p</kbd> <kbd>t</kbd> <kbd>r</kbd> <kbd>f</kbd> <kbd>c</kbd></td><td>People · Tags · Review · Featured · Clusters</td></tr>
+    <tr><td><kbd>m</kbd></td><td>Missing faces of tagged people</td></tr>
     <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>Next / previous item in the list</td></tr>
     <tr><td><kbd>v</kbd> or double-click</td><td>Show the whole photo for the face under the mouse</td></tr>
     <tr><th colspan="2">People</th></tr>
@@ -50,6 +53,11 @@
     <tr><td>slider</td><td>Weigh recency against face size</td></tr>
     <tr><td><kbd>1</kbd>–<kbd>9</kbd>, click</td><td>Make that photo the featured one</td></tr>
     <tr><td><kbd>Enter</kbd></td><td>Keep the current featured photo</td></tr>
+    <tr><th colspan="2">Missing faces</th></tr>
+    <tr><td><kbd>1</kbd>–<kbd>9</kbd>, click</td><td>This face is the person</td></tr>
+    <tr><td><kbd>w</kbd> / <kbd>d</kbd> / <kbd>x</kbd></td><td>Not in photo / not detected (queue for detection) / can't tell</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Previous / next photo</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Submit the round</td></tr>
     <tr><th colspan="2">Clusters</th></tr>
     <tr><td><kbd>a</kbd> / <kbd>Esc</kbd></td><td>Select all / clear selection</td></tr>
     <tr><td><kbd>d</kbd></td><td>Not a face (asks first; not undoable)</td></tr>

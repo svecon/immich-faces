@@ -11,6 +11,10 @@ API shapes that are easy to get wrong, read from the v3.3 source:
                            first defined name/birthday wins; also merges the
                            other users' people in the cluster group
   DELETE /faces/{id}       body {"force": false}  -- soft delete, needs face.delete
+  POST /assets/jobs        body {"name": "refresh-faces", "assetIds": [...]}
+                           re-detects per asset; faces found again keep id and
+                           person, new ones are added, ML faces not found again
+                           are removed
   There is no endpoint that unassigns a face, nor one that restores a deleted one.
 """
 
@@ -201,6 +205,23 @@ class Writer:
              "before": before, "why": why, "ref": ref},
             lambda: lib.api("DELETE", f"/faces/{face_id}", {"force": False}), verify)
 
+    def refresh_faces(self, baseline: dict[str, list[dict]], *, why: str = "") -> dict:
+        """Queue face detection again for these assets.
+
+        `baseline` is each asset's faces right before, so the outcome can be
+        diffed once the queues are idle (see `record_diff`) and undone by
+        deleting what was added. Accepted is all that can be verified here:
+        detection runs later, in Immich's queue.
+        """
+        assets = list(baseline)
+        return self._run(
+            {"op": "face.refresh", "assets": assets, "before": baseline, "why": why},
+            lambda: lib.api("POST", "/assets/jobs", {"name": "refresh-faces", "assetIds": assets}),
+            lambda: "")
+
+    def record_diff(self, seq: int, added: dict, removed: dict) -> None:
+        self._log({"seq": seq, "status": "diffed", "added": added, "removed": removed})
+
     def create_person(self, fields: dict, *, why: str = "") -> str:
         """Create an empty person (used to rebuild one a merge removed)."""
         created = {}
@@ -247,6 +268,9 @@ def read_journal(path: Path = JOURNAL) -> list[dict]:
             entries[e["seq"]] = e
         elif e.get("seq") in entries and e["status"] == "created":
             entries[e["seq"]]["created"] = e.get("person")
+        elif e.get("seq") in entries and e["status"] == "diffed":
+            entries[e["seq"]]["added"] = e.get("added", {})
+            entries[e["seq"]]["removed"] = e.get("removed", {})
         elif e.get("seq") in entries:
             entries[e["seq"]]["status"] = e["status"]
             if "error" in e:

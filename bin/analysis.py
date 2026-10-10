@@ -12,6 +12,7 @@ Vocabulary (see PLAN.md):
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import unicodedata
 from collections import Counter, defaultdict
@@ -406,6 +407,22 @@ class Model:
                     if len(out) >= limit:
                         break
         return out[:limit]
+
+    def tagged_without(self, tag_id: str, clusters: set[str]) -> list[str]:
+        """Your tagged photos with no face in `clusters`, in a stable random
+        order: rounds drawn from it are a fair sample of the tag, which an
+        oldest-first order would not be."""
+        out = []
+        for a in self.assets_by_tag[tag_id]:
+            info = self.assets.get(a)
+            if (not info or info["ownerId"] != self.owner or info["type"] != "IMAGE"
+                    or info["visibility"] == "hidden"):
+                continue
+            if any(self.faces[fid].new in clusters and not self.faces[fid].gone
+                   for fid in self.faces_by_asset.get(a, ())):
+                continue
+            out.append(a)
+        return sorted(out, key=lambda a: hashlib.sha1(a.encode()).hexdigest())
 
     def tag_opinion(self, asset: str, trusted: dict[str, str]) -> list[str]:
         """Old people the trusted tags on this asset vouch for."""

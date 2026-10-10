@@ -23,6 +23,7 @@ import threading
 import time
 import traceback
 import urllib.request
+from collections import Counter, defaultdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,6 +41,18 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
 UUID = r"[0-9a-f-]{36}"
 CLUSTER_MIN_FACES = 3
 
+# Missing faces (PLAN.md stage 4).
+ROUND_FIRST = 20        # photos per round until a tag has this many checked
+ROUND_MAX = 100
+STOP_WRONG = 3          # suggest stopping a tag at this many wrong...
+STOP_SHARE = 0.05       # ...or this share of the checked photos
+SUGGEST_SCORE = 0.4     # cluster-to-person similarity to preselect a face
+DETECT_MAX_SCORE = 0.5  # detection runs only while the threshold is at most this
+DETECT_NORMAL = 0.7
+DETECT_FIRST = 5        # the first photos ever refreshed go one at a time
+DETECT_BATCH = 100
+DETECT_TIMEOUT = 3600   # seconds to wait for the queues per batch
+
 
 # --------------------------------------------------------------------------
 # Decisions
@@ -56,6 +69,12 @@ class State:
         face TEXT PRIMARY KEY, action TEXT, target TEXT, error TEXT, ts TEXT);
     CREATE TABLE IF NOT EXISTS featured_keep (
         person TEXT PRIMARY KEY, ts TEXT);
+    -- Missing faces: one row per tag and photo looked at. verdict is face,
+    -- wrong, cant, notdetected (queued for detection), undetectable, present
+    -- (the person's face was already there) or NULL (refreshed, to review).
+    CREATE TABLE IF NOT EXISTS missing (
+        tag TEXT, asset TEXT, verdict TEXT, face TEXT, refreshed INTEGER DEFAULT 0,
+        added TEXT, error TEXT, ts TEXT, PRIMARY KEY (tag, asset));
     """
 
     def __init__(self, path: Path):
@@ -104,6 +123,22 @@ class State:
     def keep_featured(self, person):
         with self.lock:
             self.db.execute("INSERT OR REPLACE INTO featured_keep VALUES (?,?)", (person, self.now()))
+            self.db.commit()
+
+    def missing(self, tag=None) -> dict[tuple[str, str], dict]:
+        with self.lock:
+            q, args = "SELECT * FROM missing", ()
+            if tag:
+                q, args = q + " WHERE tag = ?", (tag,)
+            return {(r["tag"], r["asset"]): dict(r) for r in self.db.execute(q, args)}
+
+    def set_missing(self, tag, asset, **cols):
+        cols["ts"] = self.now()
+        with self.lock:
+            self.db.execute("INSERT OR IGNORE INTO missing (tag, asset) VALUES (?, ?)", (tag, asset))
+            sets = ", ".join(f"{k} = ?" for k in cols)
+            self.db.execute(f"UPDATE missing SET {sets} WHERE tag = ? AND asset = ?",
+                            (*cols.values(), tag, asset))
             self.db.commit()
 
     def faces(self) -> dict[str, dict]:
@@ -339,6 +374,255 @@ class App:
                                           if not self.model.mine(self.model.faces[fid])),
                 "faces": self.label_faces([self.model.face_json(f) for f in faces])}
 
+    # -- missing faces of tagged people (PLAN.md stage 4) ---------------
+    def _centroids(self) -> dict:
+        """Cluster -> normalised mean embedding, from after/centroids.csv."""
+        if not hasattr(self, "_centroid_cache"):
+            import numpy as np
+            path = lib.ROOT / "after" / "centroids.csv"
+            out = {}
+            if path.exists():
+                _, rows = lib.read_csv(path)
+                for gid, emb, n in rows:
+                    v = np.array(json.loads(emb), dtype=np.float32)
+                    out[gid] = (v / (np.linalg.norm(v) or 1), int(n))
+            self._centroid_cache = out
+        return self._centroid_cache
+
+    def _person_vector(self, clusters: list[str]):
+        """A person's fingerprint: the face-weighted mean of their clusters."""
+        import numpy as np
+        cs = self._centroids()
+        parts = [(cs[c][0], cs[c][1]) for c in clusters if c in cs]
+        if not parts:
+            return None
+        v = sum(vec * n for vec, n in parts)
+        return v / (np.linalg.norm(v) or 1)
+
+    def _missing_tags(self) -> list[dict]:
+        """Tags with a person that has an applied pairing: the only ones a
+        face can be put on."""
+        pairing = self.confirmed_pairing()
+        out = []
+        for t in self.tags()["tags"]:
+            if t["person"] in pairing:
+                out.append({"id": t["id"], "name": t["name"], "old": t["person"],
+                            "personName": self.name_of(t["person"]),
+                            "clusters": pairing[t["person"]]})
+        return out
+
+    @staticmethod
+    def _tally(rows) -> dict:
+        c = Counter(r["verdict"] for r in rows)
+        t = {"confirmed": c["face"], "wrong": c["wrong"], "cant": c["cant"],
+             "queued": c["notdetected"], "undetectable": c["undetectable"],
+             "present": c["present"], "toReview": c[None]}
+        t["checked"] = t["confirmed"] + t["wrong"]
+        t["stop"] = t["wrong"] >= STOP_WRONG or (
+            t["checked"] >= ROUND_FIRST and t["wrong"] / t["checked"] > STOP_SHARE)
+        t["round"] = (ROUND_FIRST if t["checked"] < ROUND_FIRST or t["wrong"]
+                      else min(ROUND_MAX, t["checked"]))
+        return t
+
+    def missing(self):
+        rows = self.state.missing()
+        by_tag = defaultdict(list)
+        for (tag, _), r in rows.items():
+            by_tag[tag].append(r)
+        out = []
+        for t in self._missing_tags():
+            done = {r["asset"] for r in by_tag[t["id"]]}
+            todo = [a for a in self.model.tagged_without(t["id"], set(t["clusters"])) if a not in done]
+            out.append({"id": t["id"], "name": t["name"], "personName": t["personName"],
+                        "untested": len(todo), "tally": self._tally(by_tag[t["id"]])})
+        out.sort(key=lambda r: (r["tally"]["stop"], r["untested"] == 0 and not r["tally"]["toReview"],
+                                -r["tally"]["checked"], -r["untested"]))
+        return {"tags": out, "detect": self.detect_status()}
+
+    def missing_round(self, tag: str):
+        """The next photos to review for a tag: those a detection round came
+        back with first, then a round of untested ones. Each with its live
+        faces, ranked, and a default verdict."""
+        t = next((x for x in self._missing_tags() if x["id"] == tag), None)
+        if t is None:
+            raise ValueError("tag has no paired person")
+        rows = self.state.missing(tag)
+        tally = self._tally(rows.values())
+        target = t["clusters"][0]
+        vec = self._person_vector(t["clusters"])
+        cents = self._centroids()
+
+        def score(face):
+            if vec is None or face["person"] not in cents:
+                return None
+            return round(float(cents[face["person"]][0] @ vec), 3)
+
+        refreshed = [a for (_, a), r in rows.items() if r["verdict"] is None and r["refreshed"]]
+        untested = [a for a in self.model.tagged_without(tag, set(t["clusters"]))
+                    if (tag, a) not in rows]
+        photos = []
+
+        def build(asset, added):
+            faces = lib.live_faces(asset)
+            for f in faces:
+                f["score"] = score(f)
+                f["added"] = f["id"] in added
+                f["named"] = bool(f["personName"])
+                f["isTarget"] = f["person"] == target
+            faces.sort(key=lambda f: (not f["isTarget"], f["named"], -(f["score"] or -1),
+                                      -(f["box"][2] - f["box"][0]) * (f["box"][3] - f["box"][1])))
+            return faces
+
+        import concurrent.futures as cf
+        with cf.ThreadPoolExecutor(8) as ex:
+            for asset, faces in zip(refreshed, ex.map(
+                    lambda a: build(a, set(json.loads(rows[(tag, a)]["added"] or "[]"))), refreshed)):
+                photos.append({"asset": asset, "refreshed": True, "faces": faces})
+            # Untested photos, until the round is full. A photo whose face is
+            # already on the person (moved since the export) is not shown.
+            i = 0
+            while len(photos) < len(refreshed) + tally["round"] and i < len(untested):
+                chunk = untested[i:i + 16]
+                i += 16
+                for asset, faces in zip(chunk, ex.map(lambda a: build(a, set()), chunk)):
+                    if any(f["isTarget"] for f in faces):
+                        self.state.set_missing(tag, asset, verdict="present")
+                        continue
+                    if len(photos) < len(refreshed) + tally["round"]:
+                        photos.append({"asset": asset, "refreshed": False, "faces": faces})
+
+        for ph in photos:
+            ph["file"] = self.model.assets[ph["asset"]]["originalFileName"]
+            # Suggest a face only when it is convincing: already the person,
+            # in a cluster close to them, or the photo's only unnamed face.
+            # Otherwise the photo waits for your choice.
+            unnamed = [f for f in ph["faces"] if not f["named"]]
+            pick = (next((f for f in ph["faces"] if f["isTarget"]), None)
+                    or next((f for f in unnamed if (f["score"] or 0) >= SUGGEST_SCORE), None)
+                    or (unnamed[0] if len(unnamed) == 1 else None))
+            ph["default"] = ({"verdict": "face", "face": pick["id"]} if pick else
+                             {"verdict": None, "face": None} if unnamed else
+                             {"verdict": "notdetected", "face": None})
+        return {"id": tag, "name": t["name"], "personName": t["personName"],
+                "target": target, "tally": tally, "photos": photos,
+                "hasCentroids": vec is not None}
+
+    def missing_decide(self, tag: str, verdicts: list[dict]) -> dict:
+        t = next((x for x in self._missing_tags() if x["id"] == tag), None)
+        if t is None:
+            raise ValueError("tag has no paired person")
+        target = t["clusters"][0]
+        rows = self.state.missing(tag)
+        results = {"ok": 0, "failed": []}
+        with self.write_lock:
+            for v in verdicts:
+                asset, verdict, face = v["asset"], v["verdict"], v.get("face")
+                if verdict not in ("face", "wrong", "cant", "notdetected"):
+                    raise ValueError(f"unknown verdict {verdict}")
+                refreshed = bool((rows.get((tag, asset)) or {}).get("refreshed"))
+                if verdict == "notdetected" and refreshed:
+                    verdict = "undetectable"    # detection already had its chance
+                if verdict == "face":
+                    try:
+                        self.writer.reassign(face, asset, target, why=f"missing face {t['name']}",
+                                             ref={"missing": [tag, asset]})
+                    except Exception as e:
+                        self.state.set_missing(tag, asset, error=str(e))
+                        results["failed"].append({"asset": asset, "error": str(e)})
+                        continue
+                self.state.set_missing(tag, asset, verdict=verdict, face=face, error=None)
+                results["ok"] += 1
+        return results
+
+    # -- detection rounds ---------------------------------------------
+    def detect_status(self):
+        d = self.__dict__.setdefault("_detect", {"state": "idle"})
+        queued = {a for (_, a), r in self.state.missing().items() if r["verdict"] == "notdetected"}
+        try:
+            score = lib.min_detection_score()
+        except Exception as e:
+            score = None
+            d.setdefault("configError", str(e))
+        return {**d, "queued": len(queued), "minScore": score,
+                "canRun": score is not None and score <= DETECT_MAX_SCORE,
+                "normal": DETECT_NORMAL, "maxScore": DETECT_MAX_SCORE}
+
+    def detect_run(self):
+        st = self.detect_status()
+        if st["state"] == "running":
+            raise ValueError("a detection round is already running")
+        if not st["canRun"]:
+            raise ValueError(f"lower the min detection score to {DETECT_MAX_SCORE} or less first "
+                             f"(now {st['minScore']})")
+        if not st["queued"]:
+            raise ValueError("no photos are queued for detection")
+        if not lib.ml_idle():
+            raise ValueError("the ML queues are busy -- wait until they are idle")
+        self._detect = {"state": "running", "done": 0, "total": st["queued"], "added": 0}
+        threading.Thread(target=self._detect_thread, daemon=True).start()
+        return self.detect_status()
+
+    def _detect_thread(self):
+        d = self._detect
+        try:
+            rows = self.state.missing()
+            assets = sorted({a for (_, a), r in rows.items() if r["verdict"] == "notdetected"})
+            prior = sum(len(e["assets"]) for e in writer.read_journal(self.writer.journal)
+                        if e["op"] == "face.refresh" and e["status"] == "done")
+            i = 0
+            while i < len(assets):
+                size = 1 if prior + i < DETECT_FIRST else DETECT_BATCH
+                batch = assets[i:i + size]
+                i += len(batch)
+                if lib.min_detection_score() > DETECT_MAX_SCORE:
+                    raise RuntimeError("the min detection score was raised during the round; stopped")
+                baseline = {a: lib.live_faces(a) for a in batch}
+                with self.write_lock:
+                    entry = self.writer.refresh_faces(baseline, why="missing faces")
+                if self.dry_run:
+                    after = baseline
+                else:
+                    self._wait_idle()
+                    after = {a: lib.live_faces(a) for a in batch}
+                added, removed = {}, {}
+                for a in batch:
+                    was = {f["id"] for f in baseline[a]}
+                    now = {f["id"] for f in after[a]}
+                    if now - was:
+                        added[a] = sorted(now - was)
+                    if was - now:
+                        removed[a] = sorted(was - now)
+                self.writer.record_diff(entry["seq"], added, removed)
+                for (tag, a), r in rows.items():
+                    if a in batch and r["verdict"] == "notdetected":
+                        if a in added:
+                            self.state.set_missing(tag, a, verdict=None, refreshed=1,
+                                                   added=json.dumps(added[a]))
+                        else:
+                            self.state.set_missing(tag, a, verdict="undetectable", refreshed=1)
+                d["done"] += len(batch)
+                d["added"] += sum(len(v) for v in added.values())
+                if removed:
+                    n = sum(len(v) for v in removed.values())
+                    raise RuntimeError(f"{n} existing face(s) disappeared on {len(removed)} photo(s) "
+                                       f"(journal #{entry['seq']}); stopped")
+            d["state"] = "done"
+        except Exception as e:
+            traceback.print_exc()
+            d.update(state="error", error=str(e))
+
+    @staticmethod
+    def _wait_idle():
+        """Until detection and the recognition it queues are both finished:
+        idle on two polls in a row, since one job hands over to the next."""
+        start, quiet = time.time(), 0
+        time.sleep(3)
+        while quiet < 2:
+            if time.time() - start > DETECT_TIMEOUT:
+                raise RuntimeError("the ML queues did not go idle within an hour; stopped")
+            quiet = quiet + 1 if lib.ml_idle() else 0
+            time.sleep(3)
+
     # -- featured photo --------------------------------------------------
     def featured(self):
         pairing = self.confirmed_pairing()
@@ -408,7 +692,12 @@ class App:
 
     def status(self):
         jr = writer.read_journal(self.writer.journal)
+        try:
+            score = lib.min_detection_score()
+        except Exception:
+            score = None
         return {"simulated": self.model.simulated, "dryRun": self.dry_run,
+                "minScore": score, "normalScore": DETECT_NORMAL,
                 "hasAfter": self.model.has_after, "server": lib.BASE_URL,
                 "journal": {"entries": len(jr),
                             "failed": sum(1 for e in jr if e.get("status") == "failed")}}
@@ -479,6 +768,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/status": app.status, "/api/pairings": app.pairings,
                 "/api/tags": app.tags, "/api/review": app.review, "/api/people": app.people,
                 "/api/featured": app.featured, "/api/clusters": app.clusters,
+                "/api/missing": app.missing, "/api/detect": app.detect_status,
             }
             if p in routes:
                 return self._json(routes[p]())
@@ -490,6 +780,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(app.featured_detail(m[1]))
             if m := re.fullmatch(rf"/api/clusters/({UUID})", p):
                 return self._json(app.cluster_detail(m[1]))
+            if m := re.fullmatch(rf"/api/missing/({UUID})", p):
+                return self._json(app.missing_round(m[1]))
             if m := re.fullmatch(rf"/live-thumb/({UUID})", p):
                 # The current thumbnail, never cached: it changes when set.
                 data = lib.api("GET", f"/people/{m[1]}/thumbnail", raw=True)
@@ -519,6 +811,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(app.set_featured(m[1], b["asset"]))
             if p == "/api/faces":
                 return self._json(app.decide_faces(b["decisions"]))
+            if m := re.fullmatch(rf"/api/missing/({UUID})", p):
+                return self._json(app.missing_decide(m[1], b["verdicts"]))
+            if p == "/api/detect":
+                return self._json(app.detect_run())
 
         self._json({"error": f"no route {method} {p}"}, 404)
 

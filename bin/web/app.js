@@ -81,7 +81,13 @@ async function loadStatus() {
   m.className = "badge " + (s.dryRun ? "dry" : "live");
   m.textContent = s.simulated ? "SIMULATED · dry run" : s.dryRun ? "DRY RUN" : `LIVE · ${s.server}`;
   m.title = `journal: ${s.journal.entries} entries, ${s.journal.failed} failed`;
+  const low = s.minScore != null && s.minScore < s.normalScore;
+  const b = $("#banner");
+  b.hidden = !low;
+  if (low) b.textContent = `Min detection score is ${s.minScore} — new uploads pick up junk faces while it is lowered. ` +
+                           `Set it back to ${s.normalScore} once the detection round is done.`;
 }
+setInterval(() => loadStatus().catch(() => {}), 15000);
 
 async function show(view) {
   S.view = view;
@@ -681,7 +687,176 @@ const clusters = {
   },
 };
 
-const VIEWS = { people, tags, review, featured, clusters };
+// ------------------------------------------------------- missing faces --
+// PLAN.md stage 4: per tag, small rounds of tagged photos without the tagged
+// person's face. One verdict per photo; detection rounds pool every tag's
+// "not detected" photos and run while the threshold is lowered.
+const VERDICTS = { null: "choose…", face: "this face", wrong: "not in photo", notdetected: "not detected", cant: "can't tell" };
+
+const missing = {
+  empty: "No tag has a paired person yet.",
+  async load() {
+    const r = await api("/api/missing");
+    const order = ["Detection results to review", "In progress", "Not started", "Stopping suggested", "Finished"];
+    S.items = r.tags.sort((a, b) => order.indexOf(missing.group(a)) - order.indexOf(missing.group(b)));
+    S.detect = r.detect;
+  },
+  group(t) {
+    const y = t.tally;
+    if (y.stop) return "Stopping suggested";
+    if (y.toReview) return "Detection results to review";
+    if (!t.untested) return "Finished";
+    return y.checked ? "In progress" : "Not started";
+  },
+  row(t) {
+    const y = t.tally;
+    return `<span>${esc(t.name)}</span><span class="muted">${t.untested}</span>
+      <span class="sub">→ ${esc(t.personName)} · ✓${y.confirmed} ✗${y.wrong}` +
+      `${y.queued ? ` · ${y.queued} queued` : ""}${y.toReview ? ` · ${y.toReview} to review` : ""}</span>`;
+  },
+  detectPanel() {
+    const d = S.detect;
+    if (!d) return "";
+    const score = d.minScore ?? "?";
+    let body;
+    if (d.state === "running") {
+      body = `Detecting… ${d.done} of ${d.total} photos, ${d.added} face(s) added so far.`;
+    } else {
+      const last = d.state === "done" ? `Last round: ${d.total} photos, ${d.added} face(s) added. ` :
+                   d.state === "error" ? `<span class="error">Last round stopped: ${esc(d.error)}</span> ` : "";
+      const how = d.canRun ? `<button id="detect-run" class="primary">Run detection on ${d.queued} photo(s)</button>` :
+        `To run: set <i>Administration → Machine Learning → Facial Recognition → Min detection score</i>
+         to ${d.maxScore} or less (e.g. 0.4); this updates by itself.`;
+      body = `${last}${d.queued} photo(s) queued for detection, from all tags. Min detection score: <b>${score}</b>.
+        ${d.queued ? how : ""}`;
+    }
+    return `<div class="panel">${body}</div>`;
+  },
+  async detail(t) {
+    const d = await api(`/api/missing/${t.id}`);
+    S.detail = d;
+    S.mcur = 0;
+    S.verdicts = new Map(d.photos.map((p) => [p.asset, { ...p.default }]));
+    const y = d.tally;
+    const stop = y.stop ? `<p class="error">${y.wrong} wrong of ${y.checked} checked — consider stopping this tag.</p>` : "";
+    $("#detail").innerHTML = `
+      <h2>${esc(d.name)} <span class="muted">→ ${esc(d.personName)}</span></h2>
+      <div class="stats">
+        <div><b>${y.confirmed}</b>confirmed</div><div><b>${y.wrong}</b>not in photo</div>
+        <div><b>${y.queued}</b>queued for detection</div><div><b>${y.undetectable}</b>undetectable</div>
+        <div><b>${y.cant}</b>can't tell</div><div><b>${y.present}</b>already had the face</div>
+      </div>${stop}
+      ${missing.detectPanel()}
+      ${d.photos.length ? `
+      <p class="muted">For each photo: <kbd>1</kbd>–<kbd>9</kbd> or click the face that is ${esc(d.personName)},
+        <kbd>w</kbd> not in the photo, <kbd>d</kbd> not detected (queue for detection), <kbd>x</kbd> can't tell.
+        <kbd>←</kbd> <kbd>→</kbd> move between photos, <kbd>Enter</kbd> submits the whole round.
+        Green = suggested; <i>new</i> = added by detection; faces on named people show their name.
+        Photos left on <i>choose…</i> are not submitted and come back later.
+        ${d.hasCentroids ? "" : "No fingerprints for this person, so faces are ranked by size only."}</p>
+      <div class="toolbar"><button id="m-submit" class="primary"><kbd>Enter</kbd> Submit verdicts</button>
+        <span class="muted">${d.photos.filter((p) => p.refreshed).length} from detection, ${d.photos.filter((p) => !p.refreshed).length} new</span></div>
+      <div class="mgrid">${d.photos.map((p, i) => missing.card(p, i)).join("")}</div>` :
+      `<p class="muted">Nothing to review for this tag${t.untested ? "" : " — every tagged photo is done"}.</p>`}`;
+    $("#detect-run")?.addEventListener("click", missing.runDetect);
+    $("#m-submit")?.addEventListener("click", missing.submit);
+    $$("#detail .mcard").forEach((c) => c.addEventListener("click", (e) => {
+      S.mcur = +c.dataset.i;
+      const box = e.target.closest("[data-fid]"), btn = e.target.closest("[data-v]");
+      if (box) missing.set(c.dataset.asset, "face", box.dataset.fid);
+      else if (btn) missing.set(c.dataset.asset, btn.dataset.v);
+      missing.paint();
+    }));
+    missing.paint();
+    if (S.detect?.state === "running") missing.poll();
+  },
+  card(p, i) {
+    const [W, H] = p.faces[0]?.size ?? [1, 1];
+    const boxes = p.faces.map((f, n) => {
+      const [x1, y1, x2, y2] = f.box, [w, h] = f.size;
+      const tag = f.isTarget ? "" : f.named ? esc(f.personName) : f.added ? "new" : "";
+      return `<div class="fbox${f.added ? " added" : ""}${f.named && !f.isTarget ? " named" : ""}" data-fid="${f.id}"
+        style="left:${x1 / w * 100}%;top:${y1 / h * 100}%;width:${(x2 - x1) / w * 100}%;height:${(y2 - y1) / h * 100}%"
+        title="${f.score != null ? `similarity ${f.score}` : "no fingerprint"}"><span>${n + 1}${tag ? ` ${tag}` : ""}</span></div>`;
+    }).join("");
+    return `<div class="mcard" data-i="${i}" data-asset="${p.asset}">
+      <div class="mphoto face" data-asset="${p.asset}" style="aspect-ratio:${W}/${H}">${boxes}</div>
+      <div class="mfoot"><span class="lbl" title="${esc(p.file)}">${p.refreshed ? "<b>detection</b> · " : ""}${esc(p.file)}</span>
+        <span class="mverdict"></span></div>
+      <div class="row">${["wrong", "notdetected", "cant"].map((v) =>
+        `<button data-v="${v}"><kbd>${{ wrong: "w", notdetected: "d", cant: "x" }[v]}</kbd> ${VERDICTS[v]}</button>`).join("")}</div>
+    </div>`;
+  },
+  set(asset, verdict, face = null) {
+    S.verdicts.set(asset, { verdict, face });
+  },
+  paint() {
+    $$("#detail .mcard").forEach((c) => {
+      const v = S.verdicts.get(c.dataset.asset);
+      c.classList.toggle("cur", +c.dataset.i === S.mcur);
+      $$(".fbox", c).forEach((b) => b.classList.toggle("pick", v.verdict === "face" && b.dataset.fid === v.face));
+      $$("[data-v]", c).forEach((b) => b.classList.toggle("primary", b.dataset.v === v.verdict));
+      const el = $(".mverdict", c);
+      el.textContent = VERDICTS[v.verdict];
+      el.className = `mverdict v-${v.verdict}`;
+    });
+  },
+  go(d) {
+    const n = S.detail?.photos.length;
+    if (!n) return;
+    S.mcur = Math.min(Math.max(S.mcur + d, 0), n - 1);
+    missing.paint();
+    $(`#detail .mcard[data-i="${S.mcur}"]`)?.scrollIntoView({ block: "nearest" });
+  },
+  async submit() {
+    if (S.busy) return toast("Still working on the previous request…");
+    // Unanswered photos are not sent; they come back in a later round.
+    const verdicts = [...S.verdicts].filter(([, v]) => v.verdict).map(([asset, v]) => ({ asset, ...v }));
+    if (!verdicts.length) return toast("No verdicts yet");
+    S.busy = true;
+    toast(`Submitting ${verdicts.length} verdicts…`, 600000);
+    let r;
+    try { r = await api(`/api/missing/${S.detail.id}`, { verdicts }); }
+    catch (e) { toast(e.message, 6000); return; }
+    finally { S.busy = false; }
+    toast(`${r.ok} saved${r.failed.length ? `, ${r.failed.length} failed: ${r.failed[0].error}` : ""}`, 4000);
+    await reload(true);
+  },
+  async runDetect() {
+    try { S.detect = await api("/api/detect", {}); }
+    catch (e) { return toast(e.message, 6000); }
+    missing.poll();
+  },
+  poll() {
+    clearTimeout(missing.timer);
+    missing.timer = setTimeout(async () => {
+      if (S.view !== "missing") return;
+      S.detect = await api("/api/detect");
+      const panel = $("#detail .panel");
+      if (panel) panel.outerHTML = missing.detectPanel();
+      $("#detect-run")?.addEventListener("click", missing.runDetect);
+      if (S.detect.state === "running") missing.poll();
+      else { toast("Detection round finished", 4000); await reload(true); }
+    }, 3000);
+  },
+  key(e) {
+    const ph = S.detail?.photos?.[S.mcur];
+    if (e.key === "ArrowRight" || e.key === "l") missing.go(1);
+    else if (e.key === "ArrowLeft" || e.key === "h") missing.go(-1);
+    else if (e.key === "Enter") missing.submit();
+    else if (!ph) return false;
+    else if (/^[1-9]$/.test(e.key)) {
+      const f = ph.faces[+e.key - 1];
+      if (!f) return true;
+      missing.set(ph.asset, "face", f.id); missing.paint(); missing.go(1);
+    } else if (e.key === "w" || e.key === "d" || e.key === "x") {
+      missing.set(ph.asset, { w: "wrong", d: "notdetected", x: "cant" }[e.key]); missing.paint(); missing.go(1);
+    } else return false;
+    return true;
+  },
+};
+
+const VIEWS = { people, tags, review, featured, clusters, missing };
 
 // ------------------------------------------------------------- wiring --
 document.addEventListener("keydown", (e) => {
@@ -697,6 +872,7 @@ document.addEventListener("keydown", (e) => {
   else if (k === "r") show("review");
   else if (k === "f") show("featured");
   else if (k === "c") show("clusters");
+  else if (k === "m") show("missing");
   else if (k === "?") $("#help").showModal();
   else if (k === "v" && S.hover) showHover();
   else return;

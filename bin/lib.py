@@ -35,7 +35,8 @@ TABLES = ["asset", "asset_face", "person", "person_group", "tag", "tag_asset"]
 # are only needed once names are restored and faces reassigned (stage 4).
 READ_SCOPES = ["person.read", "face.read", "asset.read", "asset.view",
                "tag.read"]
-WRITE_SCOPES = ["person.update", "person.merge", "face.update", "face.delete"]
+WRITE_SCOPES = ["person.update", "person.merge", "face.update", "face.delete",
+                "asset.update"]
 
 # Queues that can still be moving faces between people. Comparing while any
 # of them is busy reports work in progress as discrepancies.
@@ -123,6 +124,21 @@ def queue_state() -> dict[str, dict]:
     return {name: {**jobs[name]["jobCounts"],
                    "isPaused": jobs[name]["queueStatus"].get("isPaused", False)}
             for name in ML_QUEUES if name in jobs}
+
+
+def min_detection_score() -> float:
+    """The live face detection threshold (needs `systemConfig.read`)."""
+    return api("GET", "/system-config")["machineLearning"]["facialRecognition"]["minScore"]
+
+
+def live_faces(asset_id: str) -> list[dict]:
+    """An asset's faces as Immich has them now, in the shape the web app uses."""
+    return [{"id": f["id"], "asset": asset_id, "source": f.get("sourceType"),
+             "box": [f["boundingBoxX1"], f["boundingBoxY1"], f["boundingBoxX2"], f["boundingBoxY2"]],
+             "size": [f["imageWidth"], f["imageHeight"]],
+             "person": (f.get("person") or {}).get("id"),
+             "personName": (f.get("person") or {}).get("name") or ""}
+            for f in api("GET", f"/faces?id={asset_id}")]
 
 
 def ml_idle() -> bool:
