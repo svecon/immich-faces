@@ -168,7 +168,15 @@ person elsewhere in the clip is never found.
 - **Face Detection → All** (`force: true`) deletes every machine-learning face,
   then every person left without faces — names and birthdays with them. This
   is the reset. **Never run it.**
-- **Face Detection → Missing** only scans assets never scanned. No help here.
+- **Face Detection → Missing** only scans assets never scanned — including
+  assets whose detection job *failed*: the "scanned" mark
+  (`facesRecognizedAt`) is set only at the end of a successful job. Safe: it
+  deletes nothing.
+- **Found 2026-10-10:** the ML container failed to prepare the buffalo_l
+  detection model, so detection jobs returned HTTP 500 and failed — while
+  `/queues` reported 0 failed. Many "no face" tagged photos (clear selfies
+  among them) were probably never scanned at all. Once ML works: *Missing* at
+  the normal 0.7 first, then these rounds.
 - **Refresh faces on one asset** (`POST /assets/jobs {name: "refresh-faces",
   assetIds}`, or the photo's menu) diffs per asset: a detection overlapping an
   existing face by IoU > 0.5 keeps that face's id and person; a new detection
@@ -223,7 +231,9 @@ none unassigned) goes straight to *not detected*.
    back above 0.5.
 4. The refreshed photos return to the review first, with the added faces
    marked. *Not detected* on a refreshed photo closes it as *undetectable*.
-   Photos where detection added nothing are closed the same way.
+   Photos where detection added nothing also come back: Immich does not
+   report failed detection jobs, so "nothing found" and "job failed" look the
+   same from the API. A round whose first 5 photos gain no face at all stops.
 5. You restore the score to 0.7; the banner goes away.
 
 Detection rounds pool the queued photos of every tag, so the threshold goes

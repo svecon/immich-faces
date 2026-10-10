@@ -51,6 +51,7 @@ DETECT_MAX_SCORE = 0.5  # detection runs only while the threshold is at most thi
 DETECT_NORMAL = 0.7
 DETECT_FIRST = 5        # the first photos ever refreshed go one at a time
 DETECT_BATCH = 100
+DETECT_CANARY = 5       # stop if this many photos gained no face at all
 DETECT_TIMEOUT = 3600   # seconds to wait for the queues per batch
 
 
@@ -593,15 +594,20 @@ class App:
                     if was - now:
                         removed[a] = sorted(was - now)
                 self.writer.record_diff(entry["seq"], added, removed)
+                # Every refreshed photo comes back for review, even with nothing
+                # added: a failed detection job looks exactly like "no face
+                # found" from here, so closing a photo is your call, not ours.
                 for (tag, a), r in rows.items():
                     if a in batch and r["verdict"] == "notdetected":
-                        if a in added:
-                            self.state.set_missing(tag, a, verdict=None, refreshed=1,
-                                                   added=json.dumps(added[a]))
-                        else:
-                            self.state.set_missing(tag, a, verdict="undetectable", refreshed=1)
+                        self.state.set_missing(tag, a, verdict=None, refreshed=1,
+                                               added=json.dumps(added.get(a, [])))
                 d["done"] += len(batch)
                 d["added"] += sum(len(v) for v in added.values())
+                if d["done"] >= DETECT_CANARY and not d["added"]:
+                    raise RuntimeError(
+                        f"detection added no face to the first {d['done']} photos -- Immich's "
+                        f"detection jobs may be failing (check the immich_machine_learning "
+                        f"logs); stopped")
                 if removed:
                     n = sum(len(v) for v in removed.values())
                     raise RuntimeError(f"{n} existing face(s) disappeared on {len(removed)} photo(s) "
