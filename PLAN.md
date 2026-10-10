@@ -148,21 +148,17 @@ before — see immich-av1 `DEFECTS.md`).
 
 ### 4 · missing faces of tagged people — **planned**
 
-Google `People/…` tags are reliable, but on many tagged photos Immich never
-detected the tagged person: too small, blurred, turned away, in the background.
-The tag is right and the face is missing.
+Google `People/…` tags are mostly right, but on many tagged photos Immich has
+no face of the tagged person: never detected (too small, blurred, turned away,
+in the background), or detected and put on someone else or nobody. No tag is
+trusted up front: each one is checked photo by photo as faces are added, and
+earns trust — or loses it — from that review.
 
 **Size, from the snapshots.** 25,736 assets carry a `People/…` tag; 3,611 of
 them have more tags than detected faces (4,713 faces short, 2,557 assets with
 no face at all, 3,043 short by exactly one). Of those, 854 are videos and
-2,757 photos.
-
-Two different problems, two passes:
-
-| | Assets | Cause | Fix |
-|---|---|---|---|
-| A · fewer faces than tags | ~2,760 photos | face not detected | refresh faces at a lower threshold |
-| B · enough faces, none is the tagged person | ~3,800 | face detected, on the wrong person or nobody | move the face (review, no detection) |
+2,757 photos. A further ~3,800 have enough faces, but none of them is the
+tagged person.
 
 Videos are out of scope: Immich detects faces on the preview frame only, so a
 person elsewhere in the clip is never found.
@@ -186,58 +182,77 @@ person elsewhere in the clip is never found.
 - Faces added by a refresh are real ML faces with an embedding, so they also
   help Immich recognise the person later — unlike a box drawn by hand.
 
-#### Pass A — refresh faces at a lower threshold
+#### The loop — per tag, in small rounds
 
-1. **Select** photos (not videos) where trusted `People/…` tags outnumber the
-   live faces. Counted against the live server, not the snapshot.
-2. **Record** each photo's current faces (id, box, person) in the journal: the
-   baseline for the diff and for undo.
-3. **Trial** on one tag, ~50 photos, before the full run.
-4. **You lower** *Administration → Machine Learning → Facial Recognition →
-   Min detection score* from 0.7 to ~0.4. The script reads the setting back
-   and refuses to start otherwise.
-5. **Refresh** — the script, not you: `POST /assets/jobs {name:
-   "refresh-faces", assetIds}` queues one detection job per photo, then it
-   polls the queues until face detection and recognition are idle, and diffs
-   against the baseline before sending more. The trial goes one photo per
-   round; the full run in batches of ~100. Any existing face that disappears
-   stops the run.
-6. **You restore** the score to 0.7. The script checks it before step 7.
-7. **Diff** each photo against its baseline: faces added, faces removed
-   (should be none — flagged if any).
-8. **Review** in the web app, a new view grouped by tag. Per added face: the
-   crop, the whole photo, where recognition put it, and its similarity to the
-   tagged person's centroid. Actions:
-   - *is the tagged person* → assign (`PUT /faces/{person}`), unless
-     recognition already did;
-   - *someone else* → Move to…;
-   - *not a face / unknown* → delete (undoable here — these faces did not
-     exist before).
-   Faces most similar to the tagged person come first and are preselected.
-9. **Report** what is still missing: photos where even 0.4 found nothing new.
-   Left alone — nothing more can be detected.
+A new web view, *Missing faces*: one row per `People/…` tag matched to a
+person, with its tally and how many photos are untested.
 
-#### Pass B — detected but misassigned
+**1 · Review a round** (no settings change). The next N untested photos of the
+tag (photos only, oldest first), against the live faces. Each photo is shown
+whole, its faces boxed and ranked by similarity to the tagged person; the best
+unassigned or wrongly assigned face is preselected. One verdict per photo:
 
-For tagged photos where the face count is enough but none is the tagged
-person: show the photo's faces that are unassigned or on an unnamed cluster,
-ranked by similarity to the tagged person's centroid; confirm → move. Uses the
-existing face-move path; no detection, no settings change.
+| Verdict | Effect | Counts as |
+|---|---|---|
+| **this face** | assign or move it to the person (`PUT /faces/{person}`, undoable) | tag confirmed |
+| **not in this photo** | nothing written | tag wrong |
+| **not detected** | queued for a detection round | pending |
+| **can't tell** | nothing written | neutral |
+
+A photo whose faces are already all accounted for (fewer faces than tags, and
+none unassigned) goes straight to *not detected*.
+
+**2 · Detection round** (you change the threshold). When photos are queued:
+
+1. You lower *Administration → Machine Learning → Facial Recognition →
+   Min detection score* from 0.7 to ~0.4 and press *Threshold lowered*. The
+   page shows a red banner from then until step 5.
+2. The script records each queued photo's faces (id, box, person) in the
+   journal: the baseline for the diff and for undo.
+3. It sends `POST /assets/jobs {name: "refresh-faces", assetIds}` — one
+   detection job per photo — polls the queues until face detection and
+   recognition are idle, and diffs each photo against its baseline. The first
+   round goes one photo at a time; later rounds in batches of up to ~100.
+   Any existing face that disappears stops the round.
+4. The refreshed photos return to the review, with the added faces marked.
+   An added face that is not the person can be deleted — undoable, since it
+   did not exist before. Photos where even 0.4 found nothing new are closed
+   as *not detectable*.
+5. You restore the score to 0.7 and press *Threshold restored*. The key cannot
+   read the setting, so the page relies on you and keeps the banner up until
+   then.
+
+Detection rounds pool the queued photos of every tag, so the threshold goes
+down once per session rather than once per tag.
+
+**3 · Trust.** Each tag's tally — confirmed, wrong, pending, neutral — sets
+its next round:
+
+| Tally | Next round |
+|---|---|
+| fewer than 20 checked | 20 photos |
+| 0 wrong | double the last round, up to 100 |
+| 1 wrong | back to 20; the row is flagged |
+| 3+ wrong, or more than 5% | the view suggests stopping the tag |
+
+You can stop any tag at any time: only the photos you reviewed were touched.
+"Trusted" is then a measured statement — "0 wrong in 170 checked" — and the
+Tags view shows it, replacing the up-front trusted checkbox for this purpose.
 
 #### Needed
 
 - API key permissions: `asset.update` (refresh), `face.update` (have),
   `face.delete` (delete added junk, undo).
-- Tags marked trusted in the Tags view; none are yet. Untrusted tags are left
-  out of both passes.
-- Similarity uses `after/centroids.csv`. After the refresh, re-export
-  `face_search` for the added faces only (command to be written).
+- Embeddings to rank faces: `after/centroids.csv` for the people, plus a
+  `face_search` export for faces on tagged photos, re-exported after each
+  detection round for the added faces (command to be written).
+- You, at the threshold setting, for each detection round.
 
 #### Undo
 
-Every refresh is undoable from the journal: delete the faces the diff found
-added. Assignments and moves reverse as usual. Faces the refresh removed
-cannot come back — the trial run shows whether that happens at all.
+Assignments and moves reverse as usual. Faces a detection round added are
+deleted, found through the journal. Faces a detection round removed cannot come back —
+which is why the first round goes one photo at a time and any loss stops it.
 
 ---
 
