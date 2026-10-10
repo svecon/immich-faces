@@ -142,7 +142,98 @@ before — see immich-av1 `DEFECTS.md`).
 | rename, birthday, hidden, favourite | yes — write the old value back |
 | reassign a face | yes — the old person is in the journal |
 | merge two clusters | not in Immich; rebuilt from the journal by reassigning faces |
+| delete a face ("not a face") | no — Immich cannot restore a face; the journal keeps the box |
+| faces added by a refresh | yes — delete them (`DELETE /faces/{id}`) |
 | anything else | `pg_dumpall` restore — the whole instance, a last resort |
+
+### 4 · missing faces of tagged people — **planned**
+
+Google `People/…` tags are reliable, but on many tagged photos Immich never
+detected the tagged person: too small, blurred, turned away, in the background.
+The tag is right and the face is missing.
+
+**Size, from the snapshots.** 25,736 assets carry a `People/…` tag; 3,611 of
+them have more tags than detected faces (4,713 faces short, 2,557 assets with
+no face at all, 3,043 short by exactly one). Of those, 854 are videos and
+2,757 photos.
+
+Two different problems, two passes:
+
+| | Assets | Cause | Fix |
+|---|---|---|---|
+| A · fewer faces than tags | ~2,760 photos | face not detected | refresh faces at a lower threshold |
+| B · enough faces, none is the tagged person | ~3,800 | face detected, on the wrong person or nobody | move the face (review, no detection) |
+
+Videos are out of scope: Immich detects faces on the preview frame only, so a
+person elsewhere in the clip is never found.
+
+#### How face detection behaves — read from the v3.3.1 source
+
+- **Face Detection → All** (`force: true`) deletes every machine-learning face,
+  then every person left without faces — names and birthdays with them. This
+  is the reset. **Never run it.**
+- **Face Detection → Missing** only scans assets never scanned. No help here.
+- **Refresh faces on one asset** (`POST /assets/jobs {name: "refresh-faces",
+  assetIds}`, or the photo's menu) diffs per asset: a detection overlapping an
+  existing face by IoU > 0.5 keeps that face's id and person; a new detection
+  is added and queued for recognition (joins the nearest person if close
+  enough, else unassigned); an existing ML face not detected again is removed.
+  Safe for names and earlier work.
+- The minimum detection score is a global setting, so while it is lowered,
+  new uploads pick up junk too. Lower it only for the run.
+- Deleted faces are likely ignored by the diff, so a face deleted as "not a
+  face" may come back on a refreshed photo. Delete junk after the refresh.
+- Faces added by a refresh are real ML faces with an embedding, so they also
+  help Immich recognise the person later — unlike a box drawn by hand.
+
+#### Pass A — refresh faces at a lower threshold
+
+1. **Select** photos (not videos) where trusted `People/…` tags outnumber the
+   live faces. Counted against the live server, not the snapshot.
+2. **Record** each photo's current faces (id, box, person) in the journal: the
+   baseline for the diff and for undo.
+3. **Trial** on one tag, ~50 photos, before the full run.
+4. **You lower** *Administration → Machine Learning → Facial Recognition →
+   Min detection score* from 0.7 to ~0.4. The script reads the setting back
+   and refuses to start otherwise.
+5. **Refresh** the selected photos in batches through `POST /assets/jobs`,
+   journaled. Wait until the face detection and recognition queues are idle.
+6. **You restore** the score to 0.7. The script checks it before step 7.
+7. **Diff** each photo against its baseline: faces added, faces removed
+   (should be none — flagged if any).
+8. **Review** in the web app, a new view grouped by tag. Per added face: the
+   crop, the whole photo, where recognition put it, and its similarity to the
+   tagged person's centroid. Actions:
+   - *is the tagged person* → assign (`PUT /faces/{person}`), unless
+     recognition already did;
+   - *someone else* → Move to…;
+   - *not a face / unknown* → delete (undoable here — these faces did not
+     exist before).
+   Faces most similar to the tagged person come first and are preselected.
+9. **Report** what is still missing: photos where even 0.4 found nothing new.
+   Left alone — nothing more can be detected.
+
+#### Pass B — detected but misassigned
+
+For tagged photos where the face count is enough but none is the tagged
+person: show the photo's faces that are unassigned or on an unnamed cluster,
+ranked by similarity to the tagged person's centroid; confirm → move. Uses the
+existing face-move path; no detection, no settings change.
+
+#### Needed
+
+- API key permissions: `asset.update` (refresh), `face.update` (have),
+  `face.delete` (delete added junk, undo).
+- Tags marked trusted in the Tags view; none are yet. Untrusted tags are left
+  out of both passes.
+- Similarity uses `after/centroids.csv`. After the refresh, re-export
+  `face_search` for the added faces only (command to be written).
+
+#### Undo
+
+Every refresh is undoable from the journal: delete the faces the diff found
+added. Assignments and moves reverse as usual. Faces the refresh removed
+cannot come back — the trial run shows whether that happens at all.
 
 ---
 
