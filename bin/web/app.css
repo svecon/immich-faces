@@ -85,6 +85,12 @@ dialog#help th { padding-top: 10px; color: var(--muted); font-weight: 600; }
 dialog#photo { padding: 8px; max-width: 92vw; max-height: 92vh; }
 dialog#photo img { display: block; max-width: 88vw; max-height: 84vh; }
 dialog#photo .box { position: absolute; border: 2px solid #ff0; box-shadow: 0 0 0 1px #000; pointer-events: none; }
+dialog#zoom { padding: 8px; max-width: 96vw; max-height: 96vh; }
+#zoom .zscroll { max-width: 94vw; max-height: 88vh; overflow: auto; }
+#zoom .zinner { position: relative; width: var(--w); height: var(--h); background-size: 100% 100%;
+                background-repeat: no-repeat; cursor: zoom-in; }
+#zoom .zinner.big { width: calc(var(--w) * 2); height: calc(var(--h) * 2); cursor: zoom-out; }
+#zoom p { margin: 6px 0 0; font-size: 12px; }
 #banner { background: var(--bad); color: #fff; padding: 6px 16px; font-weight: 600; }
 .panel { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 10px 0; background: var(--panel); }
 .mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }

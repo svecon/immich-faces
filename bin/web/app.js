@@ -760,6 +760,8 @@ const missing = {
       `<p class="muted">Nothing to review for this tag${t.untested ? "" : " — every tagged photo is done"}.</p>`}`;
     $("#detect-run")?.addEventListener("click", missing.runDetect);
     $("#m-submit")?.addEventListener("click", missing.submit);
+    $$("#detail .mcard").forEach((c) => c.addEventListener("dblclick", () =>
+      missing.zoom(S.detail.photos[+c.dataset.i])));
     $$("#detail .mcard").forEach((c) => c.addEventListener("click", (e) => {
       S.mcur = +c.dataset.i;
       const box = e.target.closest("[data-fid]"), btn = e.target.closest("[data-v]");
@@ -786,6 +788,37 @@ const missing = {
       <div class="row">${["wrong", "notdetected", "cant"].map((v) =>
         `<button data-v="${v}"><kbd>${{ wrong: "w", notdetected: "d", cant: "x" }[v]}</kbd> ${VERDICTS[v]}</button>`).join("")}</div>
     </div>`;
+  },
+  // The photo large, boxes numbered as on the card. Click a box to pick it,
+  // anywhere else to toggle 2x; keys keep working (1-9, w/d/x, Esc closes).
+  zoom(ph) {
+    const d = $("#zoom"), inner = $(".zinner", d);
+    const [W, H] = ph.faces[0]?.size ?? [1, 1];
+    // Fit the photo to the window, keeping its proportions so the boxes
+    // (in percent) stay on the faces; "big" doubles it inside a scroller.
+    const fit = Math.min(innerWidth * 0.92 / W, innerHeight * 0.84 / H);
+    inner.className = "zinner";
+    inner.style.setProperty("--w", `${W * fit}px`);
+    inner.style.setProperty("--h", `${H * fit}px`);
+    inner.style.backgroundImage = `url(/img/${ph.asset})`;
+    inner.innerHTML = $(`#detail .mcard[data-asset="${ph.asset}"] .mphoto`).innerHTML;
+    $("p", d).textContent = `${ph.file} — 1–9 or click a face · w / d / x · click the photo to zoom · Esc closes`;
+    inner.onclick = (e) => {
+      const box = e.target.closest("[data-fid]");
+      if (!box) return inner.classList.toggle("big");
+      missing.set(ph.asset, "face", box.dataset.fid);
+      d.close(); missing.paint(); missing.go(1);
+    };
+    d.onkeydown = (e) => {
+      const f = /^[1-9]$/.test(e.key) && ph.faces[+e.key - 1];
+      const v = { w: "wrong", d: "notdetected", x: "cant" }[e.key];
+      if (f) missing.set(ph.asset, "face", f.id);
+      else if (v) missing.set(ph.asset, v);
+      else if (e.key === "v" || e.key === "z") { d.close(); return; }
+      else return;
+      e.preventDefault(); d.close(); missing.paint(); missing.go(1);
+    };
+    d.showModal();
   },
   set(asset, verdict, face = null) {
     S.verdicts.set(asset, { verdict, face });
@@ -845,6 +878,7 @@ const missing = {
     else if (e.key === "ArrowLeft" || e.key === "h") missing.go(-1);
     else if (e.key === "Enter") missing.submit();
     else if (!ph) return false;
+    else if (e.key === "v" || e.key === "z") missing.zoom(ph);
     else if (/^[1-9]$/.test(e.key)) {
       const f = ph.faces[+e.key - 1];
       if (!f) return true;
