@@ -464,7 +464,9 @@ class App:
         photos = []
 
         def build(asset, added):
-            faces = lib.live_faces(asset)
+            faces = self._faces_or_none(asset)
+            if faces is None:
+                return None
             for f in faces:
                 f["score"] = score(f)
                 f["added"] = f["id"] in added
@@ -478,6 +480,9 @@ class App:
         with cf.ThreadPoolExecutor(8) as ex:
             for asset, faces in zip(refreshed, ex.map(
                     lambda a: build(a, set(json.loads(rows[(tag, a)]["added"] or "[]"))), refreshed)):
+                if faces is None:
+                    self.state.set_missing(tag, asset, verdict="gone")
+                    continue
                 photos.append({"asset": asset, "refreshed": True, "faces": faces})
             # Untested photos, until the round is full. A photo whose face is
             # already on the person (moved since the export) is not shown.
@@ -486,6 +491,9 @@ class App:
                 chunk = untested[i:i + 16]
                 i += 16
                 for asset, faces in zip(chunk, ex.map(lambda a: build(a, set()), chunk)):
+                    if faces is None:
+                        self.state.set_missing(tag, asset, verdict="gone")
+                        continue
                     if any(f["isTarget"] for f in faces):
                         self.state.set_missing(tag, asset, verdict="present")
                         continue
@@ -535,6 +543,52 @@ class App:
                 results["ok"] += 1
         return results
 
+    @staticmethod
+    def _faces_or_none(asset):
+        """Live faces, or None for a photo deleted since the snapshot."""
+        try:
+            return lib.live_faces(asset)
+        except RuntimeError as e:
+            if "HTTP 400" in str(e) or "HTTP 404" in str(e):
+                return None
+            raise
+
+    def missing_sync(self):
+        """Re-check every open photo against Immich: faces appear outside
+        this app too (a Face Detection -> Missing run, Immich's own
+        recognition). Photos that now have the person's face become
+        `present`; queued ones that gained faces go back to the rounds."""
+        rows = self.state.missing()
+        work = []   # (tag, asset, row or None, target)
+        for t in self._missing_tags():
+            target = t["clusters"][0]
+            for a in self.model.tagged_without(t["id"], set(t["clusters"])):
+                r = rows.get((t["id"], a))
+                if r is None or r["verdict"] in ("notdetected", "undetectable", None):
+                    work.append((t["id"], a, r, target))
+        import concurrent.futures as cf
+        assets = sorted({a for _, a, _, _ in work})
+        with cf.ThreadPoolExecutor(8) as ex:
+            live = dict(zip(assets, ex.map(self._faces_or_none, assets)))
+        out = Counter()
+        for tag, a, r, target in work:
+            faces = live[a]
+            if faces is None:
+                self.state.set_missing(tag, a, verdict="gone")
+                out["gone"] += 1
+            elif any(f["person"] == target for f in faces):
+                self.state.set_missing(tag, a, verdict="present")
+                out["present"] += 1
+            elif r and r["verdict"] in ("notdetected", "undetectable") and faces and not r["refreshed"]:
+                # Faces appeared since it was queued: back to the rounds.
+                with self.state.lock:
+                    self.state.db.execute("DELETE FROM missing WHERE tag = ? AND asset = ?", (tag, a))
+                    self.state.db.commit()
+                out["requeued"] += 1
+            else:
+                out["open"] += 1
+        return {"checked": len(assets), **out}
+
     # -- detection rounds ---------------------------------------------
     def detect_status(self):
         d = self.__dict__.setdefault("_detect", {"state": "idle"})
@@ -577,7 +631,13 @@ class App:
                 i += len(batch)
                 if lib.min_detection_score() > DETECT_MAX_SCORE:
                     raise RuntimeError("the min detection score was raised during the round; stopped")
-                baseline = {a: lib.live_faces(a) for a in batch}
+                baseline = {a: f for a in batch if (f := self._faces_or_none(a)) is not None}
+                for (tag, a), r in rows.items():
+                    if a in batch and a not in baseline and r["verdict"] == "notdetected":
+                        self.state.set_missing(tag, a, verdict="gone")
+                batch = list(baseline)
+                if not batch:
+                    continue
                 with self.write_lock:
                     entry = self.writer.refresh_faces(baseline, why="missing faces")
                 if self.dry_run:
@@ -821,6 +881,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(app.missing_decide(m[1], b["verdicts"]))
             if p == "/api/detect":
                 return self._json(app.detect_run())
+            if p == "/api/missing-sync":
+                return self._json(app.missing_sync())
 
         self._json({"error": f"no route {method} {p}"}, 404)
 

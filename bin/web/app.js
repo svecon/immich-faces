@@ -730,7 +730,8 @@ const missing = {
       body = `${last}${d.queued} photo(s) queued for detection, from all tags. Min detection score: <b>${score}</b>.
         ${d.queued ? how : ""}`;
     }
-    return `<div class="panel">${body}</div>`;
+    return `<div class="panel">${body}
+      <button id="m-sync" title="Look up every open photo in Immich again: faces added outside this app count">Re-check against Immich</button></div>`;
   },
   async detail(t) {
     const d = await api(`/api/missing/${t.id}`);
@@ -759,6 +760,7 @@ const missing = {
       <div class="mgrid">${d.photos.map((p, i) => missing.card(p, i)).join("")}</div>` :
       `<p class="muted">Nothing to review for this tag${t.untested ? "" : " — every tagged photo is done"}.</p>`}`;
     $("#detect-run")?.addEventListener("click", missing.runDetect);
+    $("#m-sync")?.addEventListener("click", missing.sync);
     $("#m-submit")?.addEventListener("click", missing.submit);
     $$("#detail .mcard").forEach((c) => c.addEventListener("dblclick", () =>
       missing.zoom(S.detail.photos[+c.dataset.i])));
@@ -855,6 +857,18 @@ const missing = {
     toast(`${r.ok} saved${r.failed.length ? `, ${r.failed.length} failed: ${r.failed[0].error}` : ""}`, 4000);
     await reload(true);
   },
+  async sync() {
+    if (S.busy) return toast("Still working on the previous request…");
+    S.busy = true;
+    toast("Checking every open photo in Immich…", 600000);
+    let r;
+    try { r = await api("/api/missing-sync", {}); }
+    catch (e) { toast(e.message, 6000); return; }
+    finally { S.busy = false; }
+    toast(`${r.checked} photos checked: ${r.present || 0} now have the face, ` +
+          `${r.requeued || 0} back in the rounds, ${r.open || 0} still open`, 8000);
+    await reload(true);
+  },
   async runDetect() {
     try { S.detect = await api("/api/detect", {}); }
     catch (e) { return toast(e.message, 6000); }
@@ -868,6 +882,7 @@ const missing = {
       const panel = $("#detail .panel");
       if (panel) panel.outerHTML = missing.detectPanel();
       $("#detect-run")?.addEventListener("click", missing.runDetect);
+      $("#m-sync")?.addEventListener("click", missing.sync);
       if (S.detect.state === "running") missing.poll();
       else { toast("Detection round finished", 4000); await reload(true); }
     }, 3000);
