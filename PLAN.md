@@ -196,8 +196,12 @@ person elsewhere in the clip is never found.
 4. **You lower** *Administration → Machine Learning → Facial Recognition →
    Min detection score* from 0.7 to ~0.4. The script reads the setting back
    and refuses to start otherwise.
-5. **Refresh** the selected photos in batches through `POST /assets/jobs`,
-   journaled. Wait until the face detection and recognition queues are idle.
+5. **Refresh** — the script, not you: `POST /assets/jobs {name:
+   "refresh-faces", assetIds}` queues one detection job per photo, then it
+   polls the queues until face detection and recognition are idle, and diffs
+   against the baseline before sending more. The trial goes one photo per
+   round; the full run in batches of ~100. Any existing face that disappears
+   stops the run.
 6. **You restore** the score to 0.7. The script checks it before step 7.
 7. **Diff** each photo against its baseline: faces added, faces removed
    (should be none — flagged if any).
