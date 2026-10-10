@@ -247,9 +247,9 @@ Tags view shows it, replacing the up-front trusted checkbox for this purpose.
 
 - API key permissions: `asset.update` (refresh), `face.update` (have),
   `face.delete` (delete added junk, undo).
-- Embeddings to rank faces: `after/centroids.csv` for the people, plus a
-  `face_search` export for faces on tagged photos, re-exported after each
-  detection round for the added faces (command to be written).
+- Ranking uses `after/centroids.csv` only: a face is scored by how close
+  its cluster is to the person. Unassigned faces have no cluster and rank by
+  size. Per-face embeddings would rank better but need an export per round.
 - You, at the threshold setting, for each detection round.
 - Added junk faces are not deleted from this view; they land in unnamed
   clusters, where the Clusters view's *Not a face* removes them.
