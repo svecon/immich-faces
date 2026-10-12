@@ -85,7 +85,7 @@ async function loadStatus() {
   const b = $("#banner");
   b.hidden = !low;
   if (low) b.textContent = `Min detection score is ${s.minScore} — new uploads pick up junk faces while it is lowered. ` +
-                           `Set it back to ${s.normalScore} once the detection round is done.`;
+                           `The usual is ${s.normalScore}.`;
 }
 setInterval(() => loadStatus().catch(() => {}), 15000);
 
@@ -727,7 +727,8 @@ const missing = {
       const how = d.canRun ? `<button id="detect-run" class="primary">Run detection on ${d.queued} photo(s)</button>` :
         `To run: set <i>Administration → Machine Learning → Facial Recognition → Min detection score</i>
          to ${d.maxScore} or less (e.g. 0.4); this updates by itself.`;
-      body = `${last}${d.queued} photo(s) queued for detection, from all tags. Min detection score: <b>${score}</b>.
+      body = `${last}${d.queued} photo(s) to detect — queued and not yet reviewed, from all tags.
+        Min detection score: <b>${score}</b>.
         ${d.queued ? how : ""}`;
     }
     return `<div class="panel">${body}

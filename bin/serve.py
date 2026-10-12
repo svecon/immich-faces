@@ -48,7 +48,7 @@ STOP_WRONG = 3          # suggest stopping a tag at this many wrong...
 STOP_SHARE = 0.05       # ...or this share of the checked photos
 SUGGEST_SCORE = 0.4     # cluster-to-person similarity to preselect a face
 DETECT_MAX_SCORE = 0.5  # detection runs only while the threshold is at most this
-DETECT_NORMAL = 0.7
+DETECT_NORMAL = 0.4     # the score Immich is normally left at; below it shows a banner
 DETECT_FIRST = 5        # the first photos ever refreshed go one at a time
 DETECT_BATCH = 100
 DETECT_CANARY = 5       # stop if this many photos gained no face at all
@@ -458,9 +458,10 @@ class App:
                 return None
             return round(float(cents[face["person"]][0] @ vec), 3)
 
-        refreshed = [a for (_, a), r in rows.items() if r["verdict"] is None and r["refreshed"]]
-        untested = [a for a in self.model.tagged_without(tag, set(t["clusters"]))
-                    if (tag, a) not in rows]
+        order = self.model.tagged_without(tag, set(t["clusters"]))
+        refreshed = [a for a in order if (r := rows.get((tag, a)))
+                     and r["verdict"] is None and r["refreshed"]][:tally["round"]]
+        untested = [a for a in order if (tag, a) not in rows]
         photos = []
 
         def build(asset, added):
@@ -487,7 +488,7 @@ class App:
             # Untested photos, until the round is full. A photo whose face is
             # already on the person (moved since the export) is not shown.
             i = 0
-            while len(photos) < len(refreshed) + tally["round"] and i < len(untested):
+            while len(photos) < tally["round"] and i < len(untested):
                 chunk = untested[i:i + 16]
                 i += 16
                 for asset, faces in zip(chunk, ex.map(lambda a: build(a, set()), chunk)):
@@ -497,7 +498,7 @@ class App:
                     if any(f["isTarget"] for f in faces):
                         self.state.set_missing(tag, asset, verdict="present")
                         continue
-                    if len(photos) < len(refreshed) + tally["round"]:
+                    if len(photos) < tally["round"]:
                         photos.append({"asset": asset, "refreshed": False, "faces": faces})
 
         for ph in photos:
@@ -590,9 +591,23 @@ class App:
         return {"checked": len(assets), **out}
 
     # -- detection rounds ---------------------------------------------
+    def _detect_targets(self) -> dict[str, list[tuple[str, str]]]:
+        """Photos a detection round refreshes: the queued ones (`not detected`)
+        and every untested one, so each photo reaches the review already
+        refreshed and is classified once. asset -> [(tag, target person)]."""
+        rows = self.state.missing()
+        out = defaultdict(list)
+        for t in self._missing_tags():
+            for a in self.model.tagged_without(t["id"], set(t["clusters"])):
+                r = rows.get((t["id"], a))
+                if r is None or r["verdict"] == "notdetected":
+                    out[a].append((t["id"], t["clusters"][0]))
+        return out
+
     def detect_status(self):
         d = self.__dict__.setdefault("_detect", {"state": "idle"})
-        queued = {a for (_, a), r in self.state.missing().items() if r["verdict"] == "notdetected"}
+        queued = (range(d["total"] - d["done"]) if d["state"] == "running"
+                  else self._detect_targets())
         try:
             score = lib.min_detection_score()
         except Exception as e:
@@ -620,8 +635,8 @@ class App:
     def _detect_thread(self):
         d = self._detect
         try:
-            rows = self.state.missing()
-            assets = sorted({a for (_, a), r in rows.items() if r["verdict"] == "notdetected"})
+            targets = self._detect_targets()
+            assets = sorted(targets)
             prior = sum(len(e["assets"]) for e in writer.read_journal(self.writer.journal)
                         if e["op"] == "face.refresh" and e["status"] == "done")
             i = 0
@@ -632,9 +647,10 @@ class App:
                 if lib.min_detection_score() > DETECT_MAX_SCORE:
                     raise RuntimeError("the min detection score was raised during the round; stopped")
                 baseline = {a: f for a in batch if (f := self._faces_or_none(a)) is not None}
-                for (tag, a), r in rows.items():
-                    if a in batch and a not in baseline and r["verdict"] == "notdetected":
-                        self.state.set_missing(tag, a, verdict="gone")
+                for a in batch:
+                    if a not in baseline:
+                        for tag, _ in targets[a]:
+                            self.state.set_missing(tag, a, verdict="gone")
                 batch = list(baseline)
                 if not batch:
                     continue
@@ -657,10 +673,17 @@ class App:
                 # Every refreshed photo comes back for review, even with nothing
                 # added: a failed detection job looks exactly like "no face
                 # found" from here, so closing a photo is your call, not ours.
-                for (tag, a), r in rows.items():
-                    if a in batch and r["verdict"] == "notdetected":
-                        self.state.set_missing(tag, a, verdict=None, refreshed=1,
-                                               added=json.dumps(added.get(a, [])))
+                # Only a photo where Immich put the person's face itself closes.
+                # Photos you answered while the batch ran keep your verdict.
+                rows = self.state.missing()
+                for a in batch:
+                    for tag, target in targets[a]:
+                        r = rows.get((tag, a))
+                        if r is not None and r["verdict"] != "notdetected":
+                            continue
+                        found = any(f["person"] == target for f in after[a])
+                        self.state.set_missing(tag, a, verdict="present" if found else None,
+                                               refreshed=1, added=json.dumps(added.get(a, [])))
                 d["done"] += len(batch)
                 d["added"] += sum(len(v) for v in added.values())
                 if d["done"] >= DETECT_CANARY and not d["added"]:

@@ -183,8 +183,9 @@ person elsewhere in the clip is never found.
   is added and queued for recognition (joins the nearest person if close
   enough, else unassigned); an existing ML face not detected again is removed.
   Safe for names and earlier work.
-- The minimum detection score is a global setting, so while it is lowered,
-  new uploads pick up junk too. Lower it only for the run.
+- The minimum detection score is a global setting. **Decided 2026-10-12: it
+  stays at 0.4** — more faces, at the cost of some junk in unnamed clusters,
+  is preferred to faces never found. New uploads are scanned at 0.4 too.
 - Deleted faces are likely ignored by the diff, so a face deleted as "not a
   face" may come back on a refreshed photo. Delete junk after the refresh.
 - Faces added by a refresh are real ML faces with an embedding, so they also
@@ -214,30 +215,31 @@ later round. One verdict per photo:
 A photo whose faces are already all accounted for (fewer faces than tags, and
 none unassigned) goes straight to *not detected*.
 
-**2 · Detection round** (you change the threshold). When photos are queued:
+**2 · Detection round.** It refreshes the queued photos *and every untested
+one*, so a photo reaches the review already refreshed and is classified once:
 
-1. You lower *Administration → Machine Learning → Facial Recognition →
-   Min detection score* from 0.7 to ~0.4. The key reads the setting
-   (`systemConfig.read`), so the page notices by itself: *Run detection*
-   unlocks at 0.5 or less, and a red banner shows on every view while the
-   score is below 0.7.
-2. The script records each queued photo's faces (id, box, person) in the
+1. *Administration → Machine Learning → Facial Recognition → Min detection
+   score* is at 0.4. The key reads the setting (`systemConfig.read`): *Run
+   detection* unlocks at 0.5 or less, and a red banner shows below 0.4.
+2. The script records each photo's faces (id, box, person) in the
    journal: the baseline for the diff and for undo.
 3. It sends `POST /assets/jobs {name: "refresh-faces", assetIds}` — one
    detection job per photo — polls the queues until face detection and
    recognition are idle, and diffs each photo against its baseline. The first
    5 photos ever go one at a time; after that, batches of up to 100. Any
    existing face that disappears stops the round, and so does the score going
-   back above 0.5.
+   back above 0.5. A photo where recognition put the tagged person's face
+   by itself closes as *present*.
 4. The refreshed photos return to the review first, with the added faces
    marked. *Not detected* on a refreshed photo closes it as *undetectable*.
    Photos where detection added nothing also come back: Immich does not
    report failed detection jobs, so "nothing found" and "job failed" look the
    same from the API. A round whose first 5 photos gain no face at all stops.
-5. You restore the score to 0.7; the banner goes away.
+   A tag's round shows at most a round's worth of refreshed photos.
 
-Detection rounds pool the queued photos of every tag, so the threshold goes
-down once per session rather than once per tag.
+Detection rounds pool the photos of every tag; a photo tagged with two
+people is refreshed once. A stopped round resumes where it stopped: refreshed
+photos are no longer candidates.
 
 **3 · Trust.** Each tag's tally — confirmed, wrong, pending, neutral — sets
 its next round:
