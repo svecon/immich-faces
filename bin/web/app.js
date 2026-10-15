@@ -113,7 +113,8 @@ function renderList() {
     if (g && g !== lastGroup) { html += `<div class="group">${esc(g)}</div>`; lastGroup = g; }
     html += `<div class="item${i === S.cur ? " cur" : ""}" data-i="${i}">${v.row(it)}</div>`;
   });
-  $("#list").innerHTML = html || `<p class="muted" style="padding:12px">${v.empty}</p>`;
+  $("#list").innerHTML = (v.head?.() ?? "") + (html || `<p class="muted" style="padding:12px">${v.empty}</p>`);
+  v.wire?.();
 }
 
 async function select(i) {
@@ -914,17 +915,37 @@ const missing = {
 };
 
 // ------------------------------------------------------------- split --
-// A person named "SPLIT…" in Immich holds several people. Its live faces,
+// A person named "SPLIT…" in Immich, or any person added here by its id or
+// Immich URL, holds several people. Its live faces,
 // grouped by look when a grouping was computed, go out in bulk: to someone
 // existing, to a new person, or deleted as not a face.
 const split = {
-  empty: 'No person named "SPLIT…" in Immich. Rename a mixed person to SPLIT to work on it here.',
+  empty: 'Nothing to split. Add a cluster above, or rename a mixed person to SPLIT in Immich.',
+  head: () => `<form id="splitadd" class="splitadd"><input type="text" placeholder="Cluster id or Immich URL"
+                 aria-label="Cluster id or Immich URL"><button><kbd>n</kbd> Add</button></form>`,
+  wire() {
+    $("#splitadd").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = e.target.querySelector("input");
+      let r;
+      try { r = await api("/api/split-add", { id: input.value }); }
+      catch (err) { toast(err.message, 6000); return; }
+      await reload();
+      const i = S.items.findIndex((x) => x.id === r.id);
+      if (i >= 0) await select(i);
+    });
+  },
+  async remove(id) {
+    await api(`/api/split-remove/${id}`, {});
+    toast("Removed from the list; nothing changed in Immich");
+    await reload(true);
+  },
   async load() {
     const r = await api("/api/split");
     S.items = r.items;
     S.server = r.server;
   },
-  row: (p) => `<span>${esc(p.name)}</span><span class="muted">${p.photos}</span>
+  row: (p) => `<span>${p.name ? esc(p.name) : '<i class="muted">unnamed</i>'}</span><span class="muted">${p.photos}</span>
                <span class="sub mono">${p.id.slice(0, 8)}</span>`,
   async detail(p) {
     const [d, ppl] = await Promise.all([api(`/api/split/${p.id}`), api("/api/split-people")]);
@@ -942,20 +963,22 @@ const split = {
         ${faceHTML(f)}<div class="lbl">${esc(f.file)}</div></div>`;
     }
     $("#detail").innerHTML = `
-      <h2>${esc(d.name)} <span class="muted">${d.faces.length} faces</span></h2>
+      <h2>${d.name ? esc(d.name) : '<i class="muted">Unnamed</i>'} <span class="muted">${d.faces.length} faces</span></h2>
       <p class="muted">Select faces (click, shift-click a range, click a group heading for the whole group),
         then move them to a person or delete those that are not faces. Hover a face for its photo's Google tags;
         <kbd>v</kbd> shows the whole photo. ${d.grouped ? "Groups are by look, computed with Immich's recognition model — " +
         "faces behind goggles group by gear more than by person, so check each group." : ""}
-        <a href="${esc(d.server)}/people/${d.id}" target="_blank" rel="noopener">Open in Immich</a></p>
+        <a href="${esc(d.server)}/people/${d.id}" target="_blank" rel="noopener">Open in Immich</a>
+        ${p.added ? '· <button id="splitremove">Remove from this list</button>' : ""}</p>
       <div class="toolbar">
         <button id="notface"><kbd>d</kbd> Not a face</button>
-        <select id="moveto"><option value="">Move to…</option><option value="__new">New person…</option>${ppl.people.map((x) =>
+        <select id="moveto"><option value="">Move to…</option><option value="__new">New person…</option>${ppl.people.filter((x) => x.id !== d.id).map((x) =>
           `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
         <span class="muted" id="selcount"></span>
       </div>
       <div class="grid">${html || '<p class="muted">No faces left.</p>'}</div>`;
     $("#notface").addEventListener("click", () => split.decide("notface"));
+    $("#splitremove")?.addEventListener("click", () => split.remove(d.id));
     $("#moveto").addEventListener("change", (e) => {
       const v = e.target.value;
       e.target.value = "";
@@ -994,6 +1017,7 @@ const split = {
     if (e.key === "a") { $$("#detail .card").forEach((c) => S.selected.add(c.dataset.face)); review.paintSel(); }
     else if (e.key === "Escape") { S.selected.clear(); review.paintSel(); }
     else if (e.key === "d") split.decide("notface");
+    else if (e.key === "n") $("#splitadd input").focus();
     else return false;
     return true;
   },

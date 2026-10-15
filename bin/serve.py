@@ -376,16 +376,49 @@ class App:
                 "faces": self.label_faces([self.model.face_json(f) for f in faces])}
 
     # -- split a mixed person ------------------------------------------
-    # A person you name "SPLIT..." in Immich is listed here with its live
-    # faces, grouped by look when a grouping was computed offline
-    # (data/split/<person>.json: {face: group}), so faces go out in bulk.
+    # A person you name "SPLIT..." in Immich, or one added here by id
+    # (data/split/added.json), is listed with its live faces, grouped by
+    # look when a grouping was computed offline (data/split/<person>.json:
+    # {face: group}), so faces go out in bulk.
+    SPLIT_ADDED = lib.DATA / "split" / "added.json"
+
+    def _split_added(self) -> list:
+        return json.loads(self.SPLIT_ADDED.read_text()) if self.SPLIT_ADDED.exists() else []
+
+    def _split_save(self, ids: list):
+        self.SPLIT_ADDED.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.SPLIT_ADDED.with_suffix(".tmp")
+        tmp.write_text(json.dumps(ids, indent=1))
+        tmp.replace(self.SPLIT_ADDED)
+
     def split(self):
+        added = self._split_added()
+        people = {p["id"]: p for p in lib.all_people()}
+        ids = [i for i, p in people.items() if (p.get("name") or "").upper().startswith("SPLIT")]
+        ids += [i for i in added if i not in ids]
         out = []
-        for p in lib.all_people():
-            if (p.get("name") or "").upper().startswith("SPLIT"):
-                n = lib.api("GET", f"/people/{p['id']}/statistics")["assets"]
-                out.append({"id": p["id"], "name": p["name"], "photos": n})
+        for i in ids:
+            if i not in people:   # deleted or merged away in Immich
+                continue
+            n = lib.api("GET", f"/people/{i}/statistics")["assets"]
+            out.append({"id": i, "name": people[i].get("name") or "", "photos": n, "added": i in added})
         return {"items": out, "server": lib.BASE_URL}
+
+    def split_add(self, text: str) -> dict:
+        """Add a person by id or by an Immich people URL."""
+        m = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", text or "", re.I)
+        if not m:
+            raise ValueError("no person id found -- paste the id or the person's Immich URL")
+        pid = m[0].lower()
+        lib.api("GET", f"/people/{pid}")   # fails if there is no such person
+        ids = self._split_added()
+        if pid not in ids:
+            self._split_save(ids + [pid])
+        return {"id": pid}
+
+    def split_remove(self, pid: str) -> dict:
+        self._split_save([i for i in self._split_added() if i != pid])
+        return {}
 
     def split_people(self):
         return {"people": sorted(({"id": p["id"], "name": p["name"]} for p in lib.all_people()
@@ -409,13 +442,13 @@ class App:
                     faces.append({**f, "file": info.get("originalFileName", ""), "tags": tags,
                                   "group": groups.get(f["id"], "")})
         faces.sort(key=lambda f: (f["group"] == "", f["group"], f["file"]))
-        return {"id": pid, "name": lib.api("GET", f"/people/{pid}")["name"], "faces": faces,
+        return {"id": pid, "name": lib.api("GET", f"/people/{pid}")["name"] or "", "faces": faces,
                 "grouped": bool(groups), "server": lib.BASE_URL}
 
     def split_decide(self, pid: str, body: dict) -> dict:
         """{faces: [{id, asset}], action: move|notface, to: person id, newName}."""
         results = {"ok": 0, "failed": []}
-        name = lib.api("GET", f"/people/{pid}")["name"]
+        name = lib.api("GET", f"/people/{pid}")["name"] or pid[:8]
         with self.write_lock:
             to = body.get("to")
             if body["action"] == "move" and not to:
@@ -972,6 +1005,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(app.detect_run())
             if m := re.fullmatch(rf"/api/split/({UUID})", p):
                 return self._json(app.split_decide(m[1], b))
+            if p == "/api/split-add":
+                return self._json(app.split_add(b.get("id", "")))
+            if m := re.fullmatch(rf"/api/split-remove/({UUID})", p):
+                return self._json(app.split_remove(m[1]))
             if p == "/api/missing-sync":
                 return self._json(app.missing_sync())
 

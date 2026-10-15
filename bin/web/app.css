@@ -109,6 +109,9 @@ dialog#zoom { padding: 8px; max-width: 96vw; max-height: 96vh; }
 .mverdict { font-weight: 600; white-space: nowrap; }
 .v-face { color: var(--ok); } .v-wrong { color: var(--bad); } .v-notdetected { color: var(--warn); }
 .splitgroup { grid-column: 1 / -1; margin-top: 10px; font-weight: 600; cursor: pointer; user-select: none; }
+.splitadd { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.splitadd input { flex: 1; min-width: 0; font: inherit; padding: 4px 6px; color: inherit;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
 .splitgroup:hover { color: var(--accent); }
 @media (max-width: 760px) {
   main { grid-template-columns: 1fr; grid-template-rows: 35vh 1fr; }
