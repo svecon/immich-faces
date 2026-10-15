@@ -375,6 +375,69 @@ class App:
                                           if not self.model.mine(self.model.faces[fid])),
                 "faces": self.label_faces([self.model.face_json(f) for f in faces])}
 
+    # -- split a mixed person ------------------------------------------
+    # A person you name "SPLIT..." in Immich is listed here with its live
+    # faces, grouped by look when a grouping was computed offline
+    # (data/split/<person>.json: {face: group}), so faces go out in bulk.
+    def split(self):
+        out = []
+        for p in lib.all_people():
+            if (p.get("name") or "").upper().startswith("SPLIT"):
+                n = lib.api("GET", f"/people/{p['id']}/statistics")["assets"]
+                out.append({"id": p["id"], "name": p["name"], "photos": n})
+        return {"items": out, "server": lib.BASE_URL}
+
+    def split_people(self):
+        return {"people": sorted(({"id": p["id"], "name": p["name"]} for p in lib.all_people()
+                                  if p.get("name") and not p["name"].upper().startswith("SPLIT")),
+                                 key=lambda p: p["name"].casefold())}
+
+    def split_detail(self, pid: str):
+        import concurrent.futures as cf
+        assets = sorted({f["asset"] for f in self.writer.person_faces(pid)})
+        with cf.ThreadPoolExecutor(8) as ex:
+            live = list(ex.map(self._faces_or_none, assets))
+        path = lib.DATA / "split" / f"{pid}.json"
+        groups = json.loads(path.read_text()) if path.exists() else {}
+        faces = []
+        for a, fs in zip(assets, live):
+            info = self.model.assets.get(a) or {}
+            tags = sorted(self.model.tags[t]["value"][7:] for t in self.model.tags_by_asset.get(a, ())
+                          if self.model.tags[t]["value"].startswith("People/"))
+            for f in fs or ():
+                if f["person"] == pid:
+                    faces.append({**f, "file": info.get("originalFileName", ""), "tags": tags,
+                                  "group": groups.get(f["id"], "")})
+        faces.sort(key=lambda f: (f["group"] == "", f["group"], f["file"]))
+        return {"id": pid, "name": lib.api("GET", f"/people/{pid}")["name"], "faces": faces,
+                "grouped": bool(groups), "server": lib.BASE_URL}
+
+    def split_decide(self, pid: str, body: dict) -> dict:
+        """{faces: [{id, asset}], action: move|notface, to: person id, newName}."""
+        results = {"ok": 0, "failed": []}
+        name = lib.api("GET", f"/people/{pid}")["name"]
+        with self.write_lock:
+            to = body.get("to")
+            if body["action"] == "move" and not to:
+                new = (body.get("newName") or "").strip()
+                if not new:
+                    raise ValueError("choose a person or give a new name")
+                to = self.writer.create_person({"name": new}, why=f"split {name}")
+            for f in body["faces"]:
+                try:
+                    if self.writer.face_person(f["id"], f["asset"]) != pid:
+                        raise ValueError("no longer on this person")
+                    if body["action"] == "notface":
+                        self.writer.delete_face(f["id"], f["asset"], why=f"not a face (split {name})")
+                    elif body["action"] == "move":
+                        self.writer.reassign(f["id"], f["asset"], to, why=f"split {name}")
+                    else:
+                        raise ValueError(f"unknown action {body['action']}")
+                    results["ok"] += 1
+                except Exception as e:
+                    results["failed"].append({"face": f["id"], "error": str(e)})
+        return results
+
     # -- missing faces of tagged people (PLAN.md stage 4) ---------------
     def _centroids(self) -> dict:
         """Cluster -> normalised mean embedding, from after/centroids.csv."""
@@ -858,6 +921,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/tags": app.tags, "/api/review": app.review, "/api/people": app.people,
                 "/api/featured": app.featured, "/api/clusters": app.clusters,
                 "/api/missing": app.missing, "/api/detect": app.detect_status,
+                "/api/split": app.split, "/api/split-people": app.split_people,
             }
             if p in routes:
                 return self._json(routes[p]())
@@ -871,6 +935,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(app.cluster_detail(m[1]))
             if m := re.fullmatch(rf"/api/missing/({UUID})", p):
                 return self._json(app.missing_round(m[1]))
+            if m := re.fullmatch(rf"/api/split/({UUID})", p):
+                return self._json(app.split_detail(m[1]))
             if m := re.fullmatch(rf"/live-thumb/({UUID})", p):
                 # The current thumbnail, never cached: it changes when set.
                 data = lib.api("GET", f"/people/{m[1]}/thumbnail", raw=True)
@@ -904,6 +970,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(app.missing_decide(m[1], b["verdicts"]))
             if p == "/api/detect":
                 return self._json(app.detect_run())
+            if m := re.fullmatch(rf"/api/split/({UUID})", p):
+                return self._json(app.split_decide(m[1], b))
             if p == "/api/missing-sync":
                 return self._json(app.missing_sync())
 

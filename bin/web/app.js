@@ -913,7 +913,93 @@ const missing = {
   },
 };
 
-const VIEWS = { people, tags, review, featured, clusters, missing };
+// ------------------------------------------------------------- split --
+// A person named "SPLIT…" in Immich holds several people. Its live faces,
+// grouped by look when a grouping was computed, go out in bulk: to someone
+// existing, to a new person, or deleted as not a face.
+const split = {
+  empty: 'No person named "SPLIT…" in Immich. Rename a mixed person to SPLIT to work on it here.',
+  async load() {
+    const r = await api("/api/split");
+    S.items = r.items;
+    S.server = r.server;
+  },
+  row: (p) => `<span>${esc(p.name)}</span><span class="muted">${p.photos}</span>
+               <span class="sub mono">${p.id.slice(0, 8)}</span>`,
+  async detail(p) {
+    const [d, ppl] = await Promise.all([api(`/api/split/${p.id}`), api("/api/split-people")]);
+    S.detail = d;
+    S.faces = new Map(d.faces.map((f) => [f.id, f]));
+    let html = "", last = null;
+    for (const f of d.faces) {
+      if (d.grouped && f.group !== last) {
+        const n = d.faces.filter((x) => x.group === f.group).length;
+        html += `<div class="splitgroup" data-group="${esc(f.group)}">${f.group ? `Group ${esc(f.group)}` : "Not grouped"}
+          <span class="muted">${n} face(s)</span></div>`;
+        last = f.group;
+      }
+      html += `<div class="card" data-face="${f.id}" title="${esc(f.file)}${f.tags.length ? `\nTags: ${esc(f.tags.join(", "))}` : ""}">
+        ${faceHTML(f)}<div class="lbl">${esc(f.file)}</div></div>`;
+    }
+    $("#detail").innerHTML = `
+      <h2>${esc(d.name)} <span class="muted">${d.faces.length} faces</span></h2>
+      <p class="muted">Select faces (click, shift-click a range, click a group heading for the whole group),
+        then move them to a person or delete those that are not faces. Hover a face for its photo's Google tags;
+        <kbd>v</kbd> shows the whole photo. ${d.grouped ? "Groups are by look, computed with Immich's recognition model — " +
+        "faces behind goggles group by gear more than by person, so check each group." : ""}
+        <a href="${esc(d.server)}/people/${d.id}" target="_blank" rel="noopener">Open in Immich</a></p>
+      <div class="toolbar">
+        <button id="notface"><kbd>d</kbd> Not a face</button>
+        <select id="moveto"><option value="">Move to…</option><option value="__new">New person…</option>${ppl.people.map((x) =>
+          `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
+        <span class="muted" id="selcount"></span>
+      </div>
+      <div class="grid">${html || '<p class="muted">No faces left.</p>'}</div>`;
+    $("#notface").addEventListener("click", () => split.decide("notface"));
+    $("#moveto").addEventListener("change", (e) => {
+      const v = e.target.value;
+      e.target.value = "";
+      if (v === "__new") {
+        const name = prompt("Name of the new person:");
+        if (name?.trim()) split.decide("move", null, name.trim());
+      } else if (v) split.decide("move", v);
+    });
+    $$("#detail .card").forEach((c) => c.addEventListener("click", (e) => review.click(c, e)));
+    $$("#detail .splitgroup").forEach((g) => g.addEventListener("click", () => {
+      const ids = d.faces.filter((f) => f.group === g.dataset.group).map((f) => f.id);
+      const all = ids.every((id) => S.selected.has(id));
+      ids.forEach((id) => all ? S.selected.delete(id) : S.selected.add(id));
+      review.paintSel();
+    }));
+    review.paintSel();
+  },
+  async decide(action, to = null, newName = null) {
+    if (S.busy) return toast("Still working on the previous request…");
+    const faces = [...S.selected].map((id) => S.faces.get(id)).filter(Boolean).map((f) => ({ id: f.id, asset: f.asset }));
+    if (!faces.length) return toast("Select faces first");
+    if (action === "notface" && !confirm(`Delete ${faces.length} face detection(s)?\n\nThe photos stay; only the ` +
+        `face boxes go. Immich cannot restore a deleted face, so only do this for things that are not faces.`)) return;
+    S.busy = true;
+    toast(`${action === "notface" ? "Deleting" : "Moving"} ${faces.length} face(s)…`, 600000);
+    let r;
+    try { r = await api(`/api/split/${S.detail.id}`, { action, faces, to, newName }); }
+    catch (e) { toast(e.message, 6000); return; }
+    finally { S.busy = false; }
+    toast(`${r.ok} ${action === "notface" ? "deleted" : "moved"}` +
+          `${r.failed.length ? `, ${r.failed.length} failed: ${r.failed[0].error}` : ""}`, 5000);
+    S.selected.clear();
+    await reload(true);
+  },
+  key(e) {
+    if (e.key === "a") { $$("#detail .card").forEach((c) => S.selected.add(c.dataset.face)); review.paintSel(); }
+    else if (e.key === "Escape") { S.selected.clear(); review.paintSel(); }
+    else if (e.key === "d") split.decide("notface");
+    else return false;
+    return true;
+  },
+};
+
+const VIEWS = { people, tags, review, featured, clusters, missing, split };
 
 // ------------------------------------------------------------- wiring --
 document.addEventListener("keydown", (e) => {
@@ -930,6 +1016,7 @@ document.addEventListener("keydown", (e) => {
   else if (k === "f") show("featured");
   else if (k === "c") show("clusters");
   else if (k === "m") show("missing");
+  else if (k === "s") show("split");
   else if (k === "?") $("#help").showModal();
   else if (k === "v" && S.hover) showHover();
   else return;

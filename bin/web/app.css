@@ -108,6 +108,8 @@ dialog#zoom { padding: 8px; max-width: 96vw; max-height: 96vh; }
 .mfoot .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mverdict { font-weight: 600; white-space: nowrap; }
 .v-face { color: var(--ok); } .v-wrong { color: var(--bad); } .v-notdetected { color: var(--warn); }
+.splitgroup { grid-column: 1 / -1; margin-top: 10px; font-weight: 600; cursor: pointer; user-select: none; }
+.splitgroup:hover { color: var(--accent); }
 @media (max-width: 760px) {
   main { grid-template-columns: 1fr; grid-template-rows: 35vh 1fr; }
   aside { border-right: 0; border-bottom: 1px solid var(--line); }
