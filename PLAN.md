@@ -246,10 +246,10 @@ its next round:
 
 | Tally | Next round |
 |---|---|
-| fewer than 20 checked | 20 photos |
+| fewer than 50 checked | 50 photos |
 | 0 wrong | double the last round, up to 100 |
-| 1 wrong | back to 20; the row is flagged |
-| 3+ wrong, or more than 5% | the view suggests stopping the tag |
+| 1 wrong | back to 50 |
+| 3+ wrong, or more than 5% | shown on the row (✗); no longer suggests stopping |
 
 You can stop any tag at any time: only the photos you reviewed were touched.
 "Trusted" is then a measured statement — "0 wrong in 170 checked" — and the

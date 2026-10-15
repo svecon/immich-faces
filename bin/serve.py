@@ -42,7 +42,7 @@ UUID = r"[0-9a-f-]{36}"
 CLUSTER_MIN_FACES = 3
 
 # Missing faces (PLAN.md stage 4).
-ROUND_FIRST = 20        # photos per round until a tag has this many checked
+ROUND_FIRST = 50        # photos per round until a tag has this many checked
 ROUND_MAX = 100
 STOP_WRONG = 3          # suggest stopping a tag at this many wrong...
 STOP_SHARE = 0.05       # ...or this share of the checked photos
