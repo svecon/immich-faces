@@ -697,13 +697,12 @@ const missing = {
   empty: "No tag has a paired person yet.",
   async load() {
     const r = await api("/api/missing");
-    const order = ["Detection results to review", "In progress", "Not started", "Stopping suggested", "Finished"];
+    const order = ["Detection results to review", "In progress", "Not started", "Finished"];
     S.items = r.tags.sort((a, b) => order.indexOf(missing.group(a)) - order.indexOf(missing.group(b)));
     S.detect = r.detect;
   },
   group(t) {
     const y = t.tally;
-    if (y.stop) return "Stopping suggested";
     if (y.toReview) return "Detection results to review";
     if (!t.untested) return "Finished";
     return y.checked ? "In progress" : "Not started";
@@ -740,14 +739,13 @@ const missing = {
     S.mcur = 0;
     S.verdicts = new Map(d.photos.map((p) => [p.asset, { ...p.default }]));
     const y = d.tally;
-    const stop = y.stop ? `<p class="error">${y.wrong} wrong of ${y.checked} checked — consider stopping this tag.</p>` : "";
     $("#detail").innerHTML = `
       <h2>${esc(d.name)} <span class="muted">→ ${esc(d.personName)}</span></h2>
       <div class="stats">
         <div><b>${y.confirmed}</b>confirmed</div><div><b>${y.wrong}</b>not in photo</div>
         <div><b>${y.queued}</b>queued for detection</div><div><b>${y.undetectable}</b>undetectable</div>
         <div><b>${y.cant}</b>can't tell</div><div><b>${y.present}</b>already had the face</div>
-      </div>${stop}
+      </div>
       ${missing.detectPanel()}
       ${d.photos.length ? `
       <p class="muted">For each photo: <kbd>1</kbd>–<kbd>9</kbd> or click the face that is ${esc(d.personName)},

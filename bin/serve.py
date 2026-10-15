@@ -436,7 +436,7 @@ class App:
             todo = [a for a in self.model.tagged_without(t["id"], set(t["clusters"])) if a not in done]
             out.append({"id": t["id"], "name": t["name"], "personName": t["personName"],
                         "untested": len(todo), "tally": self._tally(by_tag[t["id"]])})
-        out.sort(key=lambda r: (r["tally"]["stop"], r["untested"] == 0 and not r["tally"]["toReview"],
+        out.sort(key=lambda r: (r["untested"] == 0 and not r["tally"]["toReview"],
                                 -r["tally"]["checked"], -r["untested"]))
         return {"tags": out, "detect": self.detect_status()}
 
