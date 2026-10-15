@@ -219,6 +219,31 @@ class Writer:
             lambda: lib.api("POST", "/assets/jobs", {"name": "refresh-faces", "assetIds": assets}),
             lambda: "")
 
+    def set_edits(self, asset_id: str, edits: list[dict], *, why: str = "") -> dict:
+        """Replace an asset's non-destructive edits (crop, rotate, mirror).
+
+        PUT replaces the whole list, so the edits there before are journaled
+        and undo puts them back -- or removes all edits if there were none.
+        """
+        def current():
+            return [{"action": x["action"], "parameters": x["parameters"]}
+                    for x in lib.api("GET", f"/assets/{asset_id}/edits")["edits"]]
+
+        before = None if self.dry_run else current()
+
+        def verify():
+            now = current()
+            return "" if now == edits else f"edits read back as {now}"
+
+        def send():
+            if edits:
+                lib.api("PUT", f"/assets/{asset_id}/edits", {"edits": edits})
+            else:
+                lib.api("DELETE", f"/assets/{asset_id}/edits")
+
+        return self._run({"op": "asset.edit", "asset": asset_id, "before": before,
+                          "after": edits, "why": why}, send, verify)
+
     def record_diff(self, seq: int, added: dict, removed: dict) -> None:
         self._log({"seq": seq, "status": "diffed", "added": added, "removed": removed})
 

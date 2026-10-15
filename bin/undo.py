@@ -43,6 +43,8 @@ def describe(e: dict) -> str:
         return f"delete face {e['face'][:8]} on asset {e['asset'][:8]}"
     if op == "person.create":
         return f"create {e.get('created', '?')}"
+    if op == "asset.edit":
+        return f"edits on asset {e['asset'][:8]}: {e['before']} -> {e['after']}"
     return op
 
 
@@ -81,6 +83,9 @@ def reverse(w: writer.Writer, e: dict) -> str:
     if op == "face.delete":
         return ("SKIPPED: Immich cannot restore a deleted face; the journal entry has its "
                 "box if you want to redraw it by hand")
+    if op == "asset.edit":
+        w.set_edits(e["asset"], e["before"] or [], why=why)
+        return "edits restored" if e["before"] else "edits removed"
     return "SKIPPED: not reversible"
 
 

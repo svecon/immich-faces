@@ -36,7 +36,8 @@ TABLES = ["asset", "asset_face", "person", "person_group", "tag", "tag_asset"]
 READ_SCOPES = ["person.read", "face.read", "asset.read", "asset.view",
                "tag.read"]
 WRITE_SCOPES = ["person.update", "person.merge", "face.update", "face.delete",
-                "asset.update"]
+                "asset.update",
+                "asset.edit.get", "asset.edit.create", "asset.edit.delete"]
 
 # Queues that can still be moving faces between people. Comparing while any
 # of them is busy reports work in progress as discrepancies.

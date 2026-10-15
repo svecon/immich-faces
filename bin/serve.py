@@ -801,7 +801,7 @@ def fetch_preview(asset_id: str) -> tuple[bytes, str]:
     path = CACHE / asset_id
     if not path.exists():
         req = urllib.request.Request(
-            f"{lib.BASE_URL}/api/assets/{asset_id}/thumbnail?size=preview",
+            f"{lib.BASE_URL}/api/assets/{asset_id}/thumbnail?size=preview&edited=true",
             headers={"x-api-key": lib.api_key()})
         with urllib.request.urlopen(req, timeout=60) as r:
             data = r.read()
