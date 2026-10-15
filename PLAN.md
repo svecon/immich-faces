@@ -272,6 +272,23 @@ Assignments and moves reverse as usual. Faces a detection round added are
 deleted, found through the journal. Faces a detection round removed cannot come back —
 which is why the first round goes one photo at a time and any loss stops it.
 
+#### Shelved — a padded detection pass for close-ups (2026-10-15)
+
+buffalo_l misses faces that fill the frame (DSCF3544 scores 0.128 as Immich
+runs it; 0.838 with a 50 % black border). Measured locally with Immich's own
+detector and steps on the 1,247 refreshed photos with nothing added: of the
+410 with no face at all, a padded second pass found faces on 57 at ≥ 0.4,
+28 at ≥ 0.6, 23 at ≥ 0.7. At ≥ 0.6 the crops are almost all real close-ups;
+0.4–0.5 is mostly ears, backs of heads and hands.
+
+The change: in `immich_ml/models/facial_recognition/detection.py`, a second
+pass on a padded copy, keeping faces ≥ 0.6 that overlap none from the first
+pass, with boxes and landmarks shifted back. Adds faces only, so existing
+faces keep matching on a refresh. Options if resumed: a local patch mounted
+into the ML container (must be re-checked on every Immich upgrade), or
+upstream — a GitHub discussion with a public example image first, then a
+PR against `main`. Never attach photos from this library.
+
 ---
 
 ## Rules carried over from immich-av1
