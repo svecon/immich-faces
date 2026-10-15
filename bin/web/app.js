@@ -765,6 +765,12 @@ const missing = {
     $("#m-submit")?.addEventListener("click", missing.submit);
     $$("#detail .mcard").forEach((c) => c.addEventListener("dblclick", () =>
       missing.zoom(S.detail.photos[+c.dataset.i])));
+    // v / z open the photo under the mouse, if any, rather than the current one.
+    S.mhover = null;
+    $$("#detail .mcard").forEach((c) => {
+      c.addEventListener("mouseenter", () => { S.mhover = +c.dataset.i; });
+      c.addEventListener("mouseleave", () => { if (S.mhover === +c.dataset.i) S.mhover = null; });
+    });
     $$("#detail .mcard").forEach((c) => c.addEventListener("click", (e) => {
       S.mcur = +c.dataset.i;
       const box = e.target.closest("[data-fid]"), btn = e.target.closest("[data-v]");
@@ -894,7 +900,10 @@ const missing = {
     else if (e.key === "ArrowLeft" || e.key === "h") missing.go(-1);
     else if (e.key === "Enter") missing.submit();
     else if (!ph) return false;
-    else if (e.key === "v" || e.key === "z") missing.zoom(ph);
+    else if (e.key === "v" || e.key === "z") {
+      if (S.mhover != null) { S.mcur = S.mhover; missing.paint(); }
+      missing.zoom(S.detail.photos[S.mcur]);
+    }
     else if (/^[1-9]$/.test(e.key)) {
       const f = ph.faces[+e.key - 1];
       if (!f) return true;
