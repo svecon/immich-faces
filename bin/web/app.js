@@ -98,9 +98,12 @@ async function show(view) {
 }
 
 async function reload(keepCur = false) {
-  const cur = keepCur ? S.cur : 0;
+  // Lists re-sort as work gets done, so keep the same item, not the same
+  // position; fall back to the position when the item has left the list.
+  const cur = keepCur ? S.cur : 0, curId = keepCur ? S.items[S.cur]?.id : undefined;
   await VIEWS[S.view].load();
-  S.cur = Math.min(cur, Math.max(0, S.items.length - 1));
+  const same = curId === undefined ? -1 : S.items.findIndex((it) => it.id === curId);
+  S.cur = same >= 0 ? same : Math.min(cur, Math.max(0, S.items.length - 1));
   renderList();
   await select(S.cur);
 }
