@@ -45,6 +45,8 @@ def describe(e: dict) -> str:
         return f"create {e.get('created', '?')}"
     if op == "asset.edit":
         return f"edits on asset {e['asset'][:8]}: {e['before']} -> {e['after']}"
+    if op == "asset.job":
+        return f"{e['job']} on {len(e['assets'])} asset(s)"
     return op
 
 
@@ -86,6 +88,8 @@ def reverse(w: writer.Writer, e: dict) -> str:
     if op == "asset.edit":
         w.set_edits(e["asset"], e["before"] or [], why=why)
         return "edits restored" if e["before"] else "edits removed"
+    if op == "asset.job":
+        return "SKIPPED: nothing to undo -- the job only re-read the original file"
     return "SKIPPED: not reversible"
 
 

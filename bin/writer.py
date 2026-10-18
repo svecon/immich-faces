@@ -219,6 +219,17 @@ class Writer:
             lambda: lib.api("POST", "/assets/jobs", {"name": "refresh-faces", "assetIds": assets}),
             lambda: "")
 
+    def asset_jobs(self, assets: list[str], name: str, *, why: str = "") -> dict:
+        """Queue one of Immich's per-asset jobs: refresh-metadata or
+        regenerate-thumbnail. They re-read the original file, so there is
+        nothing to undo; the journal records when and why they ran."""
+        if name not in ("refresh-metadata", "regenerate-thumbnail"):
+            raise ValueError(f"unsupported asset job {name}")
+        return self._run(
+            {"op": "asset.job", "job": name, "assets": assets, "why": why},
+            lambda: lib.api("POST", "/assets/jobs", {"name": name, "assetIds": assets}),
+            lambda: "")
+
     def set_edits(self, asset_id: str, edits: list[dict], *, why: str = "") -> dict:
         """Replace an asset's non-destructive edits (crop, rotate, mirror).
 
