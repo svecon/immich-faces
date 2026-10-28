@@ -19,7 +19,7 @@ from pathlib import Path
 # Configuration
 # --------------------------------------------------------------------------
 
-BASE_URL = os.environ.get("IMMICH_URL", "https://photos.lan").rstrip("/")
+BASE_URL = os.environ.get("IMMICH_URL", "https://photos.home.svec.app").rstrip("/")
 KEY_FILE = Path(os.environ.get("IMMICH_KEY_FILE", "~/.immich-key")).expanduser()
 ROOT = Path(os.environ.get("IMMICH_FACES_ROOT", "~/devel/immich-faces")).expanduser()
 
